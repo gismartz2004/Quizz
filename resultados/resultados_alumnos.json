@@ -1,0 +1,21 @@
+[
+    {
+        "usuario_id": 1,
+        "usuario_nombre": "Juan Perez",
+        "quiz_id": "quiz_1762270455",
+        "quiz_titulo": "Gismar",
+        "fecha": "2025-11-04 20:02:41",
+        "puntos_obtenidos": 10,
+        "puntos_totales": "100",
+        "porcentaje": 10,
+        "detalle_resultados": [
+            {
+                "pregunta": "Hola",
+                "valor_pregunta": "10",
+                "tu_respuesta": "hjola",
+                "respuesta_correcta": "hjola",
+                "es_correcta": true
+            }
+        ]
+    }
+]
