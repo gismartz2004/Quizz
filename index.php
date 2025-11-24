@@ -1,7 +1,7 @@
 <?php
 session_start();
 
-// Configurar zona horaria (ajusta según tu país, ej: America/Guayaquil, America/Mexico_City)
+// Configurar zona horaria (Importante para que las fechas coincidan)
 date_default_timezone_set('America/Guayaquil'); 
 
 if (!isset($_SESSION['usuario'])) {
@@ -11,10 +11,16 @@ if (!isset($_SESSION['usuario'])) {
 
 $usuario = $_SESSION['usuario'];
 
-// Función para obtener todos los quizzes con los nuevos datos
+// Función para obtener todos los quizzes
 function obtenerQuizzes() {
     $quizzes = [];
     $archivos = glob('quizzes/*.json');
+    
+    // Ordenar: Primero los abiertos, luego futuros, al final cerrados
+    usort($archivos, function($a, $b) {
+        return filemtime($b) - filemtime($a);
+    });
+
     foreach ($archivos as $archivo) {
         $contenido = file_get_contents($archivo);
         $quizData = json_decode($contenido, true);
@@ -23,11 +29,10 @@ function obtenerQuizzes() {
                 'archivo' => basename($archivo),
                 'titulo' => $quizData['titulo'] ?? 'Sin título',
                 'descripcion' => $quizData['descripcion'] ?? '',
-                'color_primario' => $quizData['color_primario'] ?? '#3498db',
-                'color_secundario' => $quizData['color_secundario'] ?? '#2980b9',
+                'color_primario' => $quizData['color_primario'] ?? '#4f46e5',
+                'color_secundario' => $quizData['color_secundario'] ?? '#4338ca',
                 'cantidad_preguntas' => count($quizData['preguntas'] ?? []),
                 'valor_total' => $quizData['valor_total'] ?? 0,
-                // Nuevos campos de fecha y tiempo
                 'fecha_inicio' => $quizData['fecha_inicio'] ?? null,
                 'fecha_fin' => $quizData['fecha_fin'] ?? null,
                 'duracion_minutos' => $quizData['duracion_minutos'] ?? 60
@@ -38,31 +43,33 @@ function obtenerQuizzes() {
 }
 
 // ==========================================================
-// VISTA: RESOLVER QUIZ
+// VISTA: RESOLVER QUIZ (MODO EXAMEN)
 // ==========================================================
 if (isset($_GET['quiz'])) {
     $quizFile = 'quizzes/' . $_GET['quiz'];
     
     if (!file_exists($quizFile)) {
-        die('<div class="container"><h2>Quiz no encontrado</h2><a href="index.php" class="btn btn-back">Volver</a></div>');
+        die('<div class="container" style="text-align:center; padding:50px;"><h2>Quiz no encontrado</h2><a href="index.php" class="btn btn-primary">Volver</a></div>');
     }
 
     $quizData = json_decode(file_get_contents($quizFile), true);
     
-    // 1. VALIDACIÓN DE FECHAS (Seguridad Backend)
+    // VALIDACIÓN DE FECHAS
     $ahora = time();
     $inicio = isset($quizData['fecha_inicio']) ? strtotime($quizData['fecha_inicio']) : 0;
     $fin = isset($quizData['fecha_fin']) ? strtotime($quizData['fecha_fin']) : $ahora + 86400;
 
+    // Estilos de error
+    $errorStyle = 'max-width:600px; margin:50px auto; padding:30px; text-align:center; background:white; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.1); font-family:sans-serif;';
+
     if ($ahora < $inicio) {
-        die('<div class="container" style="text-align:center; margin-top:50px;"><h2>⏳ El quiz aún no está disponible.</h2><p>Abre el: '.date('d/m/Y H:i', $inicio).'</p><a href="index.php" class="btn btn-back">Volver</a></div>');
+        die('<div style="'.$errorStyle.'"><h2 style="color:#e67e22;">⏳ Aún no disponible</h2><p>Este quiz abre el: <strong>'.date('d/m/Y H:i', $inicio).'</strong></p><a href="index.php" style="display:inline-block; margin-top:15px; text-decoration:none; background:#3498db; color:white; padding:10px 20px; border-radius:6px;">Volver al inicio</a></div>');
     }
     if ($ahora > $fin) {
-        die('<div class="container" style="text-align:center; margin-top:50px;"><h2>🔒 El quiz ha finalizado.</h2><p>Cerró el: '.date('d/m/Y H:i', $fin).'</p><a href="index.php" class="btn btn-back">Volver</a></div>');
+        die('<div style="'.$errorStyle.'"><h2 style="color:#e74c3c;">🔒 Quiz Finalizado</h2><p>La fecha límite fue el: <strong>'.date('d/m/Y H:i', $fin).'</strong></p><a href="index.php" style="display:inline-block; margin-top:15px; text-decoration:none; background:#3498db; color:white; padding:10px 20px; border-radius:6px;">Volver al inicio</a></div>');
     }
 
-    // 2. LÓGICA DEL TEMPORIZADOR (SESSION)
-    // Usamos una clave única por quiz para guardar cuándo empezó este usuario específico
+    // LÓGICA DEL TEMPORIZADOR
     $sessionKey = 'quiz_start_' . md5($_GET['quiz']);
     $duracionSegundos = ($quizData['duracion_minutos'] ?? 60) * 60;
 
@@ -73,15 +80,9 @@ if (isset($_GET['quiz'])) {
     $tiempoTranscurrido = time() - $_SESSION[$sessionKey];
     $tiempoRestante = $duracionSegundos - $tiempoTranscurrido;
 
-    // Si se acabó el tiempo, forzar envío o mostrar mensaje (aquí dejamos que JS haga el submit, 
-    // pero si recarga la página con tiempo negativo, lo redirigimos o mostramos alerta)
-    if ($tiempoRestante <= 0) {
-        // Opcional: Redirigir a resultados directamente si ya pasó el tiempo
-        // header("Location: resultados.php?quiz=" . urlencode($_GET['quiz']) . "&timeout=1");
-        $tiempoRestante = 0; 
-    }
+    if ($tiempoRestante <= 0) $tiempoRestante = 0; 
 
-    // Mezclar preguntas
+    // Mezclar preguntas solo una vez
     if (!isset($_SESSION['quiz_questions_' . md5($_GET['quiz'])])) {
         shuffle($quizData['preguntas']);
         $_SESSION['quiz_questions_' . md5($_GET['quiz'])] = $quizData['preguntas'];
@@ -93,88 +94,136 @@ if (isset($_GET['quiz'])) {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title><?= htmlspecialchars($quizData['titulo'] ?? 'Quiz') ?></title>
-        <link rel="stylesheet" href="css/index.css">
-        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+        <title>Resolviendo: <?= htmlspecialchars($quizData['titulo']) ?></title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
         <style>
-            /* Estilos específicos para el Timer Flotante */
+            :root { --primary: <?= htmlspecialchars($quizData['color_primario']) ?>; --bg: #f8fafc; --text: #334155; }
+            body { font-family: 'Inter', sans-serif; background-color: var(--bg); color: var(--text); margin: 0; padding-top: 80px; }
+            
+            /* Barra de Tiempo Flotante */
             .timer-bar {
-                position: fixed;
-                top: 0; left: 0; width: 100%;
-                background: #2c3e50;
-                color: white;
-                padding: 10px 20px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                z-index: 1000;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+                position: fixed; top: 0; left: 0; width: 100%; height: 70px;
+                background: white; border-bottom: 1px solid #e2e8f0;
+                display: flex; justify-content: center; align-items: center;
+                z-index: 1000; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
             }
+            .timer-content {
+                width: 100%; max-width: 1000px; padding: 0 20px;
+                display: flex; justify-content: space-between; align-items: center;
+            }
+            .quiz-info-mini { font-weight: 600; color: #1e293b; display: flex; align-items: center; gap: 10px; }
             .timer-clock {
-                font-size: 1.2rem;
-                font-weight: bold;
-                font-family: monospace;
-                background: #e74c3c;
-                padding: 5px 15px;
-                border-radius: 5px;
+                font-family: 'Courier New', monospace; font-weight: 700; font-size: 1.2rem;
+                background: #fee2e2; color: #b91c1c; padding: 8px 16px; border-radius: 8px;
+                display: flex; align-items: center; gap: 8px;
             }
-            .quiz-content { margin-top: 60px; } /* Espacio para no tapar con el timer */
-            .btn-submit { background: #27ae60; color: white; border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-size: 1rem; }
-            .btn-submit:hover { background: #2ecc71; }
-            .pregunta img { max-width: 100%; height: auto; margin: 10px 0; border-radius: 5px; }
+            .timer-clock.safe { background: #dcfce7; color: #15803d; }
+
+            .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+            
+            /* Preguntas */
+            .pregunta-card {
+                background: white; border-radius: 16px; padding: 30px; margin-bottom: 30px;
+                box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;
+                position: relative; overflow: hidden;
+            }
+            .pregunta-card::before {
+                content: ''; position: absolute; top: 0; left: 0; width: 6px; height: 100%;
+                background: var(--primary);
+            }
+            .q-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+            .q-title { font-size: 1.1rem; font-weight: 600; color: #0f172a; line-height: 1.5; }
+            .q-points { font-size: 0.85rem; font-weight: 600; color: #64748b; background: #f1f5f9; padding: 4px 10px; border-radius: 20px; height: fit-content; }
+            
+            .q-image { max-width: 100%; border-radius: 8px; margin-bottom: 20px; max-height: 300px; object-fit: contain; border: 1px solid #e2e8f0; }
+
+            /* Opciones */
+            .option-group { display: flex; flex-direction: column; gap: 12px; }
+            .option-label {
+                display: flex; align-items: center; padding: 15px; border: 2px solid #e2e8f0;
+                border-radius: 10px; cursor: pointer; transition: 0.2s; position: relative;
+            }
+            .option-label:hover { border-color: var(--primary); background: #f8fafc; }
+            .option-input { position: absolute; opacity: 0; }
+            .option-input:checked + .option-content { color: var(--primary); font-weight: 600; }
+            .option-input:checked + .option-content::before { border-color: var(--primary); background: var(--primary); box-shadow: inset 0 0 0 4px white; }
+            
+            .option-content { display: flex; align-items: center; gap: 15px; width: 100%; }
+            .option-content::before {
+                content: ''; width: 20px; height: 20px; border-radius: 50%;
+                border: 2px solid #cbd5e1; flex-shrink: 0; transition: 0.2s;
+            }
+            
+            .option-img { max-width: 120px; border-radius: 6px; margin-left: auto; }
+
+            /* Botón Enviar */
+            .actions { text-align: center; margin-top: 40px; margin-bottom: 60px; }
+            .btn-finish {
+                background: var(--primary); color: white; font-size: 1.1rem; font-weight: 600;
+                padding: 15px 40px; border-radius: 50px; border: none; cursor: pointer;
+                box-shadow: 0 10px 15px -3px rgba(79, 70, 229, 0.3); transition: 0.2s;
+            }
+            .btn-finish:hover { transform: translateY(-2px); box-shadow: 0 20px 25px -5px rgba(79, 70, 229, 0.4); }
+
+            /* Estilo seleccionado para el contenedor entero */
+            .option-label:has(input:checked) { border-color: var(--primary); background: #eff6ff; }
         </style>
     </head>
     <body>
         <div class="timer-bar">
-            <div><i class="fa-solid fa-book-open"></i> <?= htmlspecialchars($quizData['titulo']) ?></div>
-            <div id="timerDisplay" class="timer-clock">
-                <i class="fa-regular fa-clock"></i> Cargando...
+            <div class="timer-content">
+                <div class="quiz-info-mini">
+                    <i class="fas fa-book-open" style="color:var(--primary)"></i>
+                    <?= htmlspecialchars($quizData['titulo']) ?>
+                </div>
+                <div id="timerDisplay" class="timer-clock safe">
+                    <i class="far fa-clock"></i> --:--
+                </div>
             </div>
         </div>
 
-        <div class="container quiz-content">
-            <div class="quiz-header">
-                <h1><?= htmlspecialchars($quizData['titulo']) ?></h1>
-                <p><?= htmlspecialchars($quizData['descripcion']) ?></p>
-            </div>
-
+        <div class="container">
             <form id="quizForm" action="resultados.php?quiz=<?= urlencode($_GET['quiz']) ?>" method="post">
                 <?php foreach ($preguntasMostrar as $index => $pregunta): ?>
-                    <div class="pregunta" style="border-left: 5px solid <?= htmlspecialchars($quizData['color_primario']) ?>; background: #fff; padding: 20px; margin-bottom: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-                        <h3>
-                            <span style="color:<?= htmlspecialchars($quizData['color_primario']) ?>">Q<?= $index + 1 ?>.</span> 
-                            <?= htmlspecialchars($pregunta['texto']) ?>
-                            <span style="float:right; font-size:0.8rem; color:#777;">(<?= $pregunta['valor'] ?> pts)</span>
-                        </h3>
-                        
+                    <div class="pregunta-card">
+                        <div class="q-header">
+                            <div class="q-title">
+                                <span style="color:var(--primary); margin-right:8px;">#<?= $index + 1 ?></span>
+                                <?= htmlspecialchars($pregunta['texto']) ?>
+                            </div>
+                            <span class="q-points"><?= $pregunta['valor'] ?> pts</span>
+                        </div>
+
                         <?php if (!empty($pregunta['imagen'])): ?>
-                            <img src="assets/images/<?= htmlspecialchars($pregunta['imagen']) ?>" alt="Imagen de la pregunta">
+                            <img src="assets/images/<?= htmlspecialchars($pregunta['imagen']) ?>" class="q-image" alt="Imagen Pregunta">
                         <?php endif; ?>
 
-                        <div class="opciones" style="margin-top: 15px;">
+                        <div class="option-group">
                             <?php foreach ($pregunta['respuestas'] as $respuesta): ?>
-                                <div class="respuesta" style="margin-bottom: 8px;">
-                                    <input type="radio" name="respuesta[<?= $pregunta['id'] ?>]" value="<?= $respuesta['id'] ?>" id="r_<?= $pregunta['id'] ?>_<?= $respuesta['id'] ?>" required>
-                                    <label for="r_<?= $pregunta['id'] ?>_<?= $respuesta['id'] ?>" style="margin-left: 5px; cursor: pointer;">
-                                        <?= htmlspecialchars($respuesta['texto']) ?>
-                                    </label>
-                                    <?php if (!empty($respuesta['imagen'])): ?>
-                                        <br><img src="assets/images/<?= htmlspecialchars($respuesta['imagen']) ?>" style="max-width: 150px;" alt="Img respuesta">
-                                    <?php endif; ?>
-                                </div>
+                                <label class="option-label">
+                                    <input type="radio" class="option-input" name="respuesta[<?= $pregunta['id'] ?>]" value="<?= $respuesta['id'] ?>" required>
+                                    <div class="option-content">
+                                        <span><?= htmlspecialchars($respuesta['texto']) ?></span>
+                                        <?php if (!empty($respuesta['imagen'])): ?>
+                                            <img src="assets/images/<?= htmlspecialchars($respuesta['imagen']) ?>" class="option-img">
+                                        <?php endif; ?>
+                                    </div>
+                                </label>
                             <?php endforeach; ?>
                         </div>
                     </div>
                 <?php endforeach; ?>
 
-                <div class="form-actions" style="text-align: center; margin-top: 30px;">
-                    <button type="submit" class="btn btn-submit"><i class="fa-solid fa-paper-plane"></i> Enviar Respuestas</button>
+                <div class="actions">
+                    <button type="submit" class="btn-finish">
+                        <i class="fas fa-paper-plane"></i> Enviar Examen
+                    </button>
                 </div>
             </form>
         </div>
 
         <script>
-            // Tiempo restante traído desde PHP (segundos)
             let timeLeft = <?= $tiempoRestante ?>;
             const timerDisplay = document.getElementById('timerDisplay');
             const quizForm = document.getElementById('quizForm');
@@ -182,9 +231,10 @@ if (isset($_GET['quiz'])) {
             function updateTimer() {
                 if (timeLeft <= 0) {
                     clearInterval(timerInterval);
-                    timerDisplay.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> ¡Tiempo Agotado!';
-                    timerDisplay.style.background = "#c0392b";
-                    alert("El tiempo se ha terminado. Tus respuestas serán enviadas automáticamente.");
+                    timerDisplay.innerHTML = '<i class="fas fa-exclamation-circle"></i> Tiempo!';
+                    timerDisplay.style.background = "#991b1b";
+                    timerDisplay.style.color = "white";
+                    alert("¡Tiempo agotado! Enviando respuestas...");
                     quizForm.submit();
                     return;
                 }
@@ -192,27 +242,27 @@ if (isset($_GET['quiz'])) {
                 const minutes = Math.floor(timeLeft / 60);
                 const seconds = timeLeft % 60;
                 
-                // Formato 00:00
-                timerDisplay.innerHTML = `<i class="fa-regular fa-clock"></i> ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                timerDisplay.innerHTML = `<i class="far fa-clock"></i> ${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
                 
-                // Alerta visual cuando queda poco tiempo (menos de 1 min)
+                // Cambiar color cuando queda poco tiempo
                 if(timeLeft < 60) {
-                    timerDisplay.style.background = "#d35400";
-                    timerDisplay.classList.add('blink'); // Podrías añadir animación CSS
+                    timerDisplay.classList.remove('safe');
+                    timerDisplay.style.animation = "pulse 1s infinite";
                 }
 
                 timeLeft--;
             }
 
             const timerInterval = setInterval(updateTimer, 1000);
-            updateTimer(); // Ejecutar una vez al inicio
+            updateTimer(); 
         </script>
+        <style>@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }</style>
     </body>
     </html>
 <?php
 
 // ==========================================================
-// VISTA: LISTA DE QUIZZES
+// VISTA: DASHBOARD ESTUDIANTE (LISTA DE QUIZZES)
 // ==========================================================
 } else {
     $quizzes = obtenerQuizzes();
@@ -222,115 +272,222 @@ if (isset($_GET['quiz'])) {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Quizzes Disponibles</title>
-        <link rel="stylesheet" href="css/index.css">
-        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+        <title>Portal del Estudiante</title>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+        
         <style>
-            /* Estilos inline para asegurar que se vean los cambios */
-            body { background-color: #f5f7fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-            .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
-            .user-bar { background: white; padding: 15px 20px; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 30px; }
-            .quizzes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 25px; }
+            :root {
+                --primary: #4f46e5;
+                --bg-body: #f1f5f9;
+                --text-main: #1e293b;
+                --text-light: #64748b;
+            }
             
-            .quiz-card { background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); transition: transform 0.2s; display: flex; flex-direction: column; }
-            .quiz-card:hover { transform: translateY(-5px); }
-            .card-header { padding: 15px 20px; color: white; }
-            .card-header h3 { margin: 0; font-size: 1.2rem; }
-            .card-body { padding: 20px; flex-grow: 1; display: flex; flex-direction: column; }
-            .quiz-meta { margin: 15px 0; font-size: 0.9rem; color: #666; }
-            .quiz-meta div { margin-bottom: 5px; }
+            * { margin: 0; padding: 0; box-sizing: border-box; }
             
-            .status-badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; margin-bottom: 10px; }
-            .status-open { background: #d1fae5; color: #065f46; }
-            .status-closed { background: #fee2e2; color: #991b1b; }
+            body {
+                font-family: 'Inter', sans-serif;
+                background-color: var(--bg-body);
+                color: var(--text-main);
+            }
+
+            /* Navbar */
+            .navbar {
+                background: white; padding: 15px 30px;
+                display: flex; justify-content: space-between; align-items: center;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+                position: sticky; top: 0; z-index: 100;
+            }
+            .nav-brand { font-weight: 700; font-size: 1.2rem; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+            
+            .user-info { display: flex; align-items: center; gap: 15px; }
+            .user-name { font-weight: 600; font-size: 0.9rem; text-align: right; }
+            .user-role { font-size: 0.75rem; color: var(--text-light); display: block; }
+            .avatar {
+                width: 40px; height: 40px; background: #e0e7ff; color: var(--primary);
+                border-radius: 50%; display: flex; align-items: center; justify-content: center;
+                font-weight: 700;
+            }
+            .btn-logout { color: #ef4444; text-decoration: none; font-size: 1.2rem; margin-left: 10px; transition:0.2s; }
+            .btn-logout:hover { transform: scale(1.1); }
+
+            /* Contenedor Principal */
+            .container { max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+            
+            .page-header { margin-bottom: 30px; }
+            .page-header h2 { font-size: 1.8rem; font-weight: 800; margin-bottom: 5px; color: #0f172a; }
+            .page-header p { color: var(--text-light); }
+
+            /* Grid */
+            .quiz-grid {
+                display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 25px;
+            }
+
+            /* Tarjeta Quiz */
+            .quiz-card {
+                background: white; border-radius: 16px; overflow: hidden;
+                box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border: 1px solid #e2e8f0;
+                transition: transform 0.2s, box-shadow 0.2s;
+                display: flex; flex-direction: column; height: 100%;
+            }
+            .quiz-card:hover { transform: translateY(-5px); box-shadow: 0 12px 20px -5px rgba(0,0,0,0.1); }
+
+            .card-top { height: 6px; width: 100%; }
+            
+            .card-content { padding: 24px; flex-grow: 1; display: flex; flex-direction: column; }
+            
+            .status-badge {
+                display: inline-flex; align-items: center; gap: 6px;
+                padding: 6px 12px; border-radius: 30px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; width: fit-content; margin-bottom: 15px;
+            }
+            .status-open { background: #dcfce7; color: #166534; }
+            .status-closed { background: #f1f5f9; color: #64748b; }
             .status-future { background: #ffedd5; color: #9a3412; }
 
-            .btn { text-decoration: none; padding: 10px 15px; border-radius: 5px; text-align: center; display: inline-block; }
-            .btn-primary { background: #3498db; color: white; }
-            .btn-disabled { background: #ccc; color: #666; cursor: not-allowed; pointer-events: none; }
-            .logout-btn { color: #e74c3c; text-decoration: none; font-weight: bold; }
+            .quiz-title { font-size: 1.25rem; font-weight: 700; color: #1e293b; margin-bottom: 8px; line-height: 1.3; }
+            .quiz-desc { color: var(--text-light); font-size: 0.9rem; line-height: 1.5; margin-bottom: 20px; flex-grow: 1; }
+
+            /* NUEVO: SECCIÓN DE FECHAS */
+            .date-info {
+                background: #f8fafc; padding: 12px; border-radius: 8px; font-size: 0.85rem; color: #475569;
+                margin-bottom: 15px; border: 1px solid #e2e8f0;
+            }
+            .date-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+            .date-row:last-child { margin-bottom: 0; }
+            .date-label { font-weight: 600; color: #64748b; font-size: 0.75rem; text-transform: uppercase; }
+
+            .meta-info {
+                display: flex; justify-content: space-between; padding: 15px 0;
+                border-top: 1px solid #f1f5f9; border-bottom: 1px solid #f1f5f9; margin-bottom: 20px; font-size: 0.85rem; color: #475569;
+            }
+            .meta-item { display: flex; align-items: center; gap: 6px; }
+
+            /* Botón Card */
+            .btn-card {
+                display: flex; justify-content: center; align-items: center; gap: 8px;
+                padding: 12px; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 0.95rem; transition: 0.2s;
+            }
+            .btn-primary { background: var(--primary); color: white; }
+            .btn-primary:hover { background: #4338ca; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3); }
+            
+            .btn-disabled { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; pointer-events: none; }
+
+            /* Empty State */
+            .empty-state { text-align: center; padding: 60px 20px; color: var(--text-light); }
+            .empty-icon { font-size: 3rem; margin-bottom: 15px; opacity: 0.5; }
         </style>
     </head>
     <body>
-        <div class="container">
-            <div class="user-bar">
+
+        <nav class="navbar">
+            <div class="nav-brand">
+                <i class="fas fa-graduation-cap fa-lg"></i> AulaVirtual
+            </div>
+            <div class="user-info">
                 <div>
-                    <h2 style="margin:0;">👤 <?= htmlspecialchars($usuario['nombre'] ?? 'Estudiante') ?></h2>
-                    <small style="color:#777"><?= date('d/m/Y H:i') ?></small>
+                    <div class="user-name"><?= htmlspecialchars($usuario['nombre']) ?></div>
+                    <span class="user-role">Estudiante</span>
                 </div>
-                <a href="logout.php" class="logout-btn"><i class="fa-solid fa-right-from-bracket"></i> Cerrar sesión</a>
+                <div class="avatar">
+                    <?= strtoupper(substr($usuario['nombre'], 0, 1)) ?>
+                </div>
+                <a href="logout.php" class="btn-logout" title="Cerrar Sesión">
+                    <i class="fas fa-sign-out-alt"></i>
+                </a>
+            </div>
+        </nav>
+
+        <div class="container">
+            <div class="page-header">
+                <h2>Evaluaciones Disponibles</h2>
+                <p>Selecciona un examen para comenzar. Asegúrate de tener una conexión estable.</p>
             </div>
 
-            <div class="header" style="margin-bottom: 20px;">
-                <h2>📚 Quizzes Disponibles</h2>
-                <p>Selecciona un quiz habilitado para comenzar.</p>
-            </div>
-
-            <?php if (!empty($quizzes)): ?>
-                <div class="quizzes-grid">
+            <?php if (empty($quizzes)): ?>
+                <div class="empty-state">
+                    <i class="far fa-folder-open empty-icon"></i>
+                    <h3>No hay evaluaciones asignadas</h3>
+                    <p>Tus profesores aún no han publicado ningún quiz.</p>
+                </div>
+            <?php else: ?>
+                <div class="quiz-grid">
                     <?php foreach ($quizzes as $quiz): 
-                        // Lógica de estado del quiz
                         $ahora = time();
                         $inicio = isset($quiz['fecha_inicio']) ? strtotime($quiz['fecha_inicio']) : 0;
                         $fin = isset($quiz['fecha_fin']) ? strtotime($quiz['fecha_fin']) : $ahora + 86400;
                         
                         $estado = 'open';
-                        $mensajeBtn = 'Iniciar Quiz';
+                        $mensajeBtn = 'Comenzar Examen';
+                        $iconoBtn = 'fa-play';
                         
                         if ($ahora < $inicio) {
                             $estado = 'future';
-                            $mensajeBtn = 'Abre pronto';
+                            $mensajeBtn = 'Próximamente';
+                            $iconoBtn = 'fa-clock';
                         } elseif ($ahora > $fin) {
                             $estado = 'closed';
-                            $mensajeBtn = 'Cerrado';
+                            $mensajeBtn = 'Examen Cerrado';
+                            $iconoBtn = 'fa-lock';
                         }
                     ?>
-                        <div class="quiz-card" style="border-top: 4px solid <?= htmlspecialchars($quiz['color_primario']) ?>;">
-                            <div class="card-header" style="background-color: <?= htmlspecialchars($quiz['color_primario']) ?>;">
-                                <h3><?= htmlspecialchars($quiz['titulo']) ?></h3>
+                    <div class="quiz-card">
+                        <div class="card-top" style="background: <?= htmlspecialchars($quiz['color_primario']) ?>;"></div>
+                        <div class="card-content">
+                            <div>
+                                <?php if($estado == 'open'): ?>
+                                    <span class="status-badge status-open"><i class="fas fa-circle" style="font-size:8px"></i> Disponible</span>
+                                <?php elseif($estado == 'closed'): ?>
+                                    <span class="status-badge status-closed"><i class="fas fa-lock"></i> Finalizado</span>
+                                <?php else: ?>
+                                    <span class="status-badge status-future"><i class="fas fa-hourglass-half"></i> Programado</span>
+                                <?php endif; ?>
                             </div>
-                            <div class="card-body">
-                                <div>
-                                    <?php if($estado == 'open'): ?>
-                                        <span class="status-badge status-open"><i class="fa-solid fa-check-circle"></i> Disponible</span>
-                                    <?php elseif($estado == 'closed'): ?>
-                                        <span class="status-badge status-closed"><i class="fa-solid fa-lock"></i> Finalizado</span>
-                                    <?php else: ?>
-                                        <span class="status-badge status-future"><i class="fa-solid fa-clock"></i> Programado</span>
-                                    <?php endif; ?>
-                                </div>
 
-                                <p><?= htmlspecialchars($quiz['descripcion'] ?: 'Sin descripción') ?></p>
-                                
-                                <div class="quiz-meta">
-                                    <div><i class="fa-solid fa-list-ol"></i> <strong><?= $quiz['cantidad_preguntas'] ?></strong> preguntas</div>
-                                    <div><i class="fa-solid fa-star"></i> <strong><?= $quiz['valor_total'] ?></strong> pts</div>
-                                    <div><i class="fa-regular fa-hourglass"></i> <strong><?= $quiz['duracion_minutos'] ?></strong> minutos</div>
-                                    <hr style="border: 0; border-top: 1px solid #eee; margin: 10px 0;">
-                                    <?php if($quiz['fecha_inicio']): ?>
-                                        <div style="font-size: 0.85rem;">
-                                            <div><i class="fa-regular fa-calendar-check"></i> Inicio: <?= date('d/m/y H:i', strtotime($quiz['fecha_inicio'])) ?></div>
-                                            <div><i class="fa-regular fa-calendar-xmark"></i> Fin: <?= date('d/m/y H:i', strtotime($quiz['fecha_fin'])) ?></div>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
+                            <h3 class="quiz-title"><?= htmlspecialchars($quiz['titulo']) ?></h3>
+                            <p class="quiz-desc">
+                                <?= htmlspecialchars(substr($quiz['descripcion'], 0, 80)) . (strlen($quiz['descripcion'])>80 ? '...' : '') ?>
+                            </p>
 
-                                <a href="index.php?quiz=<?= urlencode($quiz['archivo']) ?>" 
-                                   class="btn <?= ($estado == 'open') ? 'btn-primary' : 'btn-disabled' ?>">
-                                   <?= $mensajeBtn ?>
-                                </a>
+                            <div class="date-info">
+                                <div class="date-row">
+                                    <span class="date-label">Apertura:</span>
+                                    <span><?= $quiz['fecha_inicio'] ? date('d/m/y H:i', strtotime($quiz['fecha_inicio'])) : 'Inmediata' ?></span>
+                                </div>
+                                <div class="date-row">
+                                    <span class="date-label">Cierre:</span>
+                                    <span style="color: <?= $estado == 'closed' ? '#ef4444' : 'inherit' ?>">
+                                        <?= $quiz['fecha_fin'] ? date('d/m/y H:i', strtotime($quiz['fecha_fin'])) : 'Sin límite' ?>
+                                    </span>
+                                </div>
                             </div>
+
+                            <div class="meta-info">
+                                <div class="meta-item" title="Preguntas">
+                                    <i class="fas fa-list-ol" style="color:var(--primary)"></i> 
+                                    <?= $quiz['cantidad_preguntas'] ?>
+                                </div>
+                                <div class="meta-item" title="Duración">
+                                    <i class="far fa-clock" style="color:var(--primary)"></i> 
+                                    <?= $quiz['duracion_minutos'] ?>m
+                                </div>
+                                <div class="meta-item" title="Puntos Totales">
+                                    <i class="fas fa-star" style="color:#eab308"></i> 
+                                    <?= $quiz['valor_total'] ?> pts
+                                </div>
+                            </div>
+
+                            <a href="index.php?quiz=<?= urlencode($quiz['archivo']) ?>" 
+                               class="btn-card <?= ($estado == 'open') ? 'btn-primary' : 'btn-disabled' ?>">
+                                <i class="fas <?= $iconoBtn ?>"></i> <?= $mensajeBtn ?>
+                            </a>
                         </div>
+                    </div>
                     <?php endforeach; ?>
-                </div>
-            <?php else: ?>
-                <div class="no-quizzes" style="text-align: center; padding: 50px; background: white; border-radius: 10px;">
-                    <i class="fa-regular fa-folder-open" style="font-size: 3rem; color: #ddd;"></i>
-                    <h3>No hay quizzes disponibles</h3>
-                    <p>El profesor aún no ha creado ningún quiz.</p>
                 </div>
             <?php endif; ?>
         </div>
+
     </body>
     </html>
 <?php

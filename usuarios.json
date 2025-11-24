@@ -4,7 +4,7 @@
     "email": "alumno@ejemplo.com",
     "password": "123456",
     "rol": "estudiante",
-    "nombre":"Juan Perez"
+    "nombre":"Jostin Duarte"
     
   },
   {
@@ -12,6 +12,6 @@
     "email": "profe@ejemplo.com",
     "password": "123456",
     "rol": "profesor",
-    "nombre":"Maria Gomez"
+    "nombre":"Daniel Calderon"
   }
 ]

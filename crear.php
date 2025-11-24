@@ -322,7 +322,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
         <h1><i class="fa-solid fa-brain"></i> Creador de Quizzes IA</h1>
         <p>Genera con IA, importa PDF o crea manualmente</p>
     </div>
-
+     <a href="profesor.php" class="menu-item active">
+                <i class="fas fa-home"></i> <span class="text">Inicio</span>
+            </a>
     <?php if ($mensaje): ?>
         <div class="alert"><i class="fa-solid fa-circle-info"></i> <?php echo $mensaje; ?></div>
     <?php endif; ?>
