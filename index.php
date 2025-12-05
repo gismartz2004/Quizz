@@ -256,6 +256,10 @@ if (isset($_GET['quiz'])) {
                     <div id="progressBar" class="progress-bar-fill"></div>
                 </div>
             </div>
+            <form id="quizForm" action="resultados.php?quiz=<?= $quizId ?>" method="post">
+    
+            <input type="hidden" name="intentos_copia" id="intentosCopia" value="0">
+            <input type="hidden" name="tiempo_fuera_segundos" id="tiempoFuera" value="0">
 
             <form id="quizForm" action="resultados.php?quiz=<?= $quizId ?>" method="post">
                 <?php foreach ($preguntasMostrar as $index => $pregunta): ?>
@@ -301,6 +305,67 @@ if (isset($_GET['quiz'])) {
         </div>
 
         <script>
+            let tabSwitchCount = 0;
+    let timeAwayStart = 0;
+    let totalTimeAway = 0;
+    
+    const inputIntentos = document.getElementById('intentosCopia');
+    const inputTiempo = document.getElementById('tiempoFuera');
+
+    // Detectar cambio de pestaña o minimizado
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            // El usuario salió de la pestaña
+            tabSwitchCount++;
+            timeAwayStart = new Date().getTime();
+            
+            // Actualizar input oculto
+            inputIntentos.value = tabSwitchCount;
+            
+            // Cambiar título de la pestaña para alertar
+            document.title = "⚠️ ¡REGRESA AL EXAMEN!";
+            
+        } else {
+            // El usuario regresó
+            let timeAwayEnd = new Date().getTime();
+            let duration = (timeAwayEnd - timeAwayStart) / 1000; // Segundos
+            totalTimeAway += duration;
+            
+            // Actualizar input oculto
+            inputTiempo.value = Math.floor(totalTimeAway);
+            
+            // Restaurar título y mostrar advertencia
+            document.title = "Examen: <?= htmlspecialchars($quizData['titulo']) ?>";
+            mostrarAdvertencia(tabSwitchCount);
+        }
+    });
+
+    // Función para mostrar advertencia visual (Modal)
+    function mostrarAdvertencia(count) {
+        // Crear overlay si no existe
+        if (!document.getElementById('warnOverlay')) {
+            const overlay = document.createElement('div');
+            overlay.id = 'warnOverlay';
+            overlay.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; display:flex; justify-content:center; align-items:center; flex-direction:column; text-align:center; color:white; font-family:"Inter",sans-serif;';
+            
+            overlay.innerHTML = `
+                <div style="background:#fff; color:#333; padding:30px; border-radius:12px; max-width:400px; box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+                    <div style="font-size:3rem; margin-bottom:10px;">🚨</div>
+                    <h2 style="color:#ef4444; margin:0 0 10px 0;">¡Movimiento Detectado!</h2>
+                    <p>Has salido de la pantalla del examen. Esta acción ha sido registrada.</p>
+                    <p style="font-size:0.9rem; background:#fee2e2; color:#991b1b; padding:10px; border-radius:6px; margin:15px 0;">
+                        Faltas acumuladas: <strong id="warnCount">0</strong>
+                    </p>
+                    <button onclick="document.getElementById('warnOverlay').style.display='none'" style="background:#4f46e5; color:white; border:none; padding:10px 20px; border-radius:6px; cursor:pointer; font-weight:bold;">Entendido, continuar</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        }
+        
+        // Actualizar contador y mostrar
+        document.getElementById('warnCount').innerText = count;
+        document.getElementById('warnOverlay').style.display = 'flex';
+    }
             // --- TEMPORIZADOR ---
             let timeLeft = <?= $tiempoRestante ?>;
             const timerDisplay = document.getElementById('timerDisplay');
