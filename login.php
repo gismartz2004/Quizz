@@ -1,5 +1,6 @@
 <?php
 session_start();
+require 'db.php'; // Conexión a la base de datos SQL
 
 // Verificar si el usuario ya está logueado
 if (isset($_SESSION['usuario'])) {
@@ -8,13 +9,6 @@ if (isset($_SESSION['usuario'])) {
     exit();
 }
 
-// Cargar usuarios desde el archivo JSON (Simulación de base de datos)
-$usuarios = [];
-if (file_exists('usuarios.json')) {
-    $usuarios = json_decode(file_get_contents('usuarios.json'), true);
-}
-
-// Procesar el formulario de login
 $error = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -24,27 +18,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($email) || empty($password)) {
         $error = "Por favor completa todos los campos.";
     } else {
-        $login_exitoso = false;
+        // CONSULTA SQL SEGURA (Prepared Statement)
+        $stmt = $pdo->prepare("SELECT * FROM usuarios WHERE email = ?");
+        $stmt->execute([$email]);
+        $usuario = $stmt->fetch();
 
-        if ($usuarios) {
-            foreach ($usuarios as $usuario) {
-                // NOTA: En un entorno real, usa password_verify() y hashes
-                if ($usuario['email'] === $email && $usuario['password'] === $password) {
-                    $_SESSION['usuario'] = $usuario;
-                    $login_exitoso = true;
+        // Verificar contraseña
+        // Nota: Si en el futuro usas encriptación, cambia esto por: password_verify($password, $usuario['password'])
+        if ($usuario && $usuario['password'] === $password) {
+            
+            // Guardar datos en sesión
+            $_SESSION['usuario'] = $usuario;
 
-                    // Redirección según rol
-                    if (isset($usuario['rol']) && $usuario['rol'] === 'profesor') {
-                        header('Location: profesor.php');
-                    } else {
-                        header('Location: index.php');
-                    }
-                    exit();
-                }
+            // Redirección según rol
+            if (isset($usuario['rol']) && $usuario['rol'] === 'profesor') {
+                header('Location: profesor.php');
+            } else {
+                header('Location: index.php');
             }
-        }
-        
-        if (!$login_exitoso) {
+            exit();
+        } else {
             $error = "Credenciales incorrectas. Inténtalo de nuevo.";
         }
     }
@@ -62,18 +55,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     <style>
         :root {
-            --primary-color: #6366f1; /* Color principal (Azul índigo) */
+            --primary-color: #6366f1;
             --primary-hover: #4f46e5;
             --bg-color: #f3f4f6;
             --text-color: #1f2937;
             --card-bg: #ffffff;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             font-family: 'Poppins', sans-serif;
@@ -93,9 +82,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             width: 100%;
             max-width: 400px;
             text-align: center;
+            animation: fadeIn 0.5s ease-out;
         }
 
-        /* Estilos del Logo */
         .logo-container {
             width: 100px;
             height: 100px;
@@ -104,57 +93,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             justify-content: center;
             align-items: center;
             border-radius: 50%;
-            background-color: #e0e7ff; /* Fondo suave tras el logo */
+            background-color: #e0e7ff;
             overflow: hidden;
         }
 
         .logo-container img {
-            width: 80%; /* Ajusta esto según tu imagen */
+            width: 80%;
             height: auto;
             object-fit: contain;
         }
 
-        h2 {
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: #111827;
-        }
+        h2 { margin-bottom: 0.5rem; font-weight: 600; color: #111827; }
         
-        .subtitle {
-            color: #6b7280;
-            font-size: 0.9rem;
-            margin-bottom: 2rem;
-        }
+        .subtitle { color: #6b7280; font-size: 0.9rem; margin-bottom: 2rem; }
 
-        .form-group {
-            margin-bottom: 1.5rem;
-            text-align: left;
-            position: relative;
-        }
+        .form-group { margin-bottom: 1.5rem; text-align: left; }
 
         .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: #374151;
+            display: block; margin-bottom: 0.5rem; font-size: 0.9rem; font-weight: 500; color: #374151;
         }
 
-        .input-wrapper {
-            position: relative;
-        }
+        .input-wrapper { position: relative; }
 
         .input-wrapper i {
-            position: absolute;
-            left: 15px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #9ca3af;
+            position: absolute; left: 15px; top: 50%; transform: translateY(-50%); color: #9ca3af;
         }
 
         .form-group input {
             width: 100%;
-            padding: 12px 12px 12px 40px; /* Espacio para el icono */
+            padding: 12px 12px 12px 40px;
             border: 1px solid #d1d5db;
             border-radius: 8px;
             font-size: 1rem;
@@ -181,9 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             transition: background-color 0.3s;
         }
 
-        button:hover {
-            background-color: var(--primary-hover);
-        }
+        button:hover { background-color: var(--primary-hover); }
 
         .error-msg {
             background-color: #fee2e2;
@@ -196,11 +161,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             display: flex;
             align-items: center;
             gap: 10px;
-        }
-
-        /* Animación suave de entrada */
-        .login-container {
-            animation: fadeIn 0.5s ease-out;
         }
 
         @keyframes fadeIn {
@@ -219,7 +179,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <i class="fas fa-graduation-cap fa-3x" style="color: var(--primary-color);"></i>
             <?php endif; ?>
         </div>
-        
 
         <h2>Bienvenido</h2>
         <p class="subtitle">Ingresa tus credenciales para continuar</p>
