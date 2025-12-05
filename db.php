@@ -1,9 +1,10 @@
 <?php
-// db.php
-$host = '195.35.61.56';
-$db   = 'u578800031_Quizz';          // Verifica que sea exactamente este nombre
-$user = 'u578800031_Sistema_quizz';  // Verifica que sea exactamente este usuario
-$pass = 'Desarrollosoftware2025';    // La contraseña que acabas de restablecer
+// db.php - Conexión Optimizada para Latencia
+
+$host = '195.35.61.56'; // IP de Hostinger
+$db   = 'u578800031_Quizz';
+$user = 'u578800031_Sistema_quizz';
+$pass = 'Desarrollosoftware2025';
 $charset = 'utf8mb4';
 
 try {
@@ -11,10 +12,10 @@ try {
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
+        // ESTA LÍNEA ES LA MAGIA: Mantiene la conexión abierta
+        PDO::ATTR_PERSISTENT => true 
     ]);
-    // Si llegas aquí, conectó bien.
 } catch (\PDOException $e) {
-    // Muestra el error exacto para depurar (solo mientras arreglas esto)
     die("Error de conexión: " . $e->getMessage());
 }
 ?>
