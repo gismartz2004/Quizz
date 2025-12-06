@@ -1,36 +1,39 @@
 FROM php:8.2-apache
 
-# 1. Instalar dependencias del sistema (git y zip son necesarios para Composer)
+# 1. Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
     unzip \
     libzip-dev \
     libpq-dev \
-    && docker-php-ext-install zip pdo pdo_mysql pdo_pgsql mysqli
+    && docker-php-ext-install zip pdo pdo_mysql pdo_pgsql mysqli \
+    && a2enmod rewrite \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 2. Instalar Composer (copiándolo de la imagen oficial)
+# 2. Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# 3. Configurar Apache para Cloud Run
+# 3. Configure Apache for Cloud Run / Environment variables
+# We use a custom configuration that listens on PORT environment variable
 RUN sed -i 's/80/${PORT}/g' /etc/apache2/sites-available/000-default.conf \
     && sed -i 's/80/${PORT}/g' /etc/apache2/ports.conf
 
-# 4. Directorio de trabajo
+# 4. Set Working Directory
 WORKDIR /var/www/html
 
-# 5. Copiar archivos (Gracias al .dockerignore, NO copiará la carpeta vendor)
+# 5. Copy Files (respects .dockerignore)
 COPY . /var/www/html/
 
-# 6. EJECUTAR COMPOSER INSTALL (Aquí se crea la carpeta vendor nueva y limpia)
+# 6. Install Dependencies (Optimized for Production)
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# 7. Dar permisos a la carpeta html (incluyendo la nueva vendor)
+# 7. Permissions
 RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html
 
-# 8. Variables de entorno
+# 8. Environment Defaults
+ENV PORT=8080
 EXPOSE 8080
-ENV PORT 8080
 
-# 9. Iniciar
+# 9. Start Apache
 CMD ["apache2-foreground"]

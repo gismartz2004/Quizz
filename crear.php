@@ -1,5 +1,12 @@
 <?php
-// Forzar cabecera UTF-8 para el navegador
+session_start();
+
+// Mostrar errores (puedes quitar en producción)
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
+
+// Forzar cabecera UTF-8
 header('Content-Type: text/html; charset=utf-8');
 
 require 'vendor/autoload.php';
@@ -7,11 +14,10 @@ require 'vendor/autoload.php';
 // ==========================================
 // 1. CONFIGURACIÓN SEGURA
 // ==========================================
-if (file_exists('config.php')) {
-    require_once 'config.php';
-} else {
+if (!file_exists('config.php')) {
     die('<div style="color:red; padding:20px; text-align:center;">Error: Falta config.php</div>');
 }
+require_once 'config.php';
 
 if (!defined('GEMINI_API_KEY') || empty(GEMINI_API_KEY)) {
     die('<div style="color:red; padding:20px; text-align:center;">Error: API Key no configurada.</div>');
@@ -20,28 +26,24 @@ if (!defined('GEMINI_API_KEY') || empty(GEMINI_API_KEY)) {
 $geminiApiKey = GEMINI_API_KEY;
 
 // ==========================================
-// 2. FUNCIONES DE PROCESAMIENTO (MEJORADAS PARA UTF-8)
+// 2. FUNCIONES DE PROCESAMIENTO
 // ==========================================
 
 function procesarTextoCuestionario($text) {
-    // 1. Asegurar UTF-8
     if (!mb_check_encoding($text, 'UTF-8')) {
         $text = mb_convert_encoding($text, 'UTF-8', 'auto');
     }
 
     $preguntas = [];
-    // Normalizar saltos de línea
     $text = str_replace(["\r\n", "\r"], "\n", $text);
     $lines = explode("\n", $text);
-    
+
     $currentPregunta = null;
-    
+
     foreach ($lines as $line) {
         $line = trim($line);
-        if (empty($line)) continue;
+        if ($line === '') continue;
 
-        // REGEX MEJORADO CON SOPORTE UNICODE (/u)
-        // Detecta: "¿Pregunta?", "1. Pregunta", "1) Pregunta", "- Pregunta", y tildes
         $esPregunta = preg_match('/^(\d+[\.\)]|\-|¿).+|.*\?$/u', $line);
 
         if ($esPregunta) {
@@ -49,31 +51,24 @@ function procesarTextoCuestionario($text) {
                 $preguntas[] = $currentPregunta;
             }
 
-            // Limpieza del texto (usando mb_ para no romper acentos)
             $textoLimpio = preg_replace('/^(\d+[\.\)]|\-)\s*/u', '', $line);
             $textoLimpio = str_replace(['**'], '', $textoLimpio);
 
             $currentPregunta = [
-                'texto' => $textoLimpio,
+                'texto' => trim($textoLimpio),
                 'valor' => 10,
                 'respuestas' => []
             ];
-        } elseif ($currentPregunta) {
-            // Detectar respuesta correcta (*)
-            // Usamos mb_substr para leer el primer caracter de forma segura
+        } else {
+            if (!$currentPregunta) continue;
+
             $primerCaracter = mb_substr($line, 0, 1, 'UTF-8');
             $esCorrecta = ($primerCaracter === '*');
-            
-            // Limpiar asterisco
-            if ($esCorrecta) {
-                $textoRespuesta = mb_substr($line, 1, null, 'UTF-8');
-            } else {
-                $textoRespuesta = $line;
-            }
-            
+
+            $textoRespuesta = $esCorrecta ? mb_substr($line, 1, null, 'UTF-8') : $line;
             $textoRespuesta = trim($textoRespuesta);
 
-            if (mb_strlen($textoRespuesta, 'UTF-8') > 1) {
+            if ($textoRespuesta !== '') {
                 $currentPregunta['respuestas'][] = [
                     'texto' => $textoRespuesta,
                     'correcta' => $esCorrecta
@@ -81,25 +76,23 @@ function procesarTextoCuestionario($text) {
             }
         }
     }
-    
+
     if ($currentPregunta && !empty($currentPregunta['respuestas'])) {
         $preguntas[] = $currentPregunta;
     }
-    
+
     return $preguntas;
 }
 
 function generarPreguntasIA($tema, $apiKey) {
     $modelo = "models/gemini-2.5-flash"; 
-    $url = "https://generativelanguage.googleapis.com/v1beta/" . $modelo . ":generateContent?key=" . $apiKey;
-    
-    $prompt = "Genera 5 preguntas de opción múltiple sobre: '$tema'.
-    REGLAS ESTRICTAS DE FORMATO:
-    1. Escribe la pregunta directamente (ej: '1. ¿Cuál es el color...?').
-    2. Usa acentos y ñ correctamente.
-    3. LA RESPUESTA CORRECTA DEBE EMPEZAR CON UN ASTERISCO (*).
-    4. NO uses letras A) B) C).
-    5. NO uses negritas markdown (**).";
+    $url = "https://generativelanguage.googleapis.com/v1beta/$modelo:generateContent?key=$apiKey";
+
+    $prompt = "Genera 5 preguntas de opción múltiple sobre '$tema'.
+    REGLAS:
+    - La respuesta correcta debe iniciar con (*)
+    - No usar letras A), B), etc.
+    - No usar markdown.";
 
     $data = ["contents" => [["parts" => [["text" => $prompt]]]]];
 
@@ -108,94 +101,93 @@ function generarPreguntasIA($tema, $apiKey) {
     curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-    
-    // Descomentar si hay problemas de SSL en local
-    // curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); 
 
     $response = curl_exec($ch);
-    
     if (curl_errno($ch)) return "Error cURL: " . curl_error($ch);
     curl_close($ch);
-    
+
     $json = json_decode($response, true);
-    
-    if (isset($json['candidates'][0]['content']['parts'][0]['text'])) {
-        return $json['candidates'][0]['content']['parts'][0]['text'];
-    }
-    
-    return "";
+    return $json['candidates'][0]['content']['parts'][0]['text'] ?? "";
 }
 
 // ==========================================
-// 3. PROCESAMIENTO
+// 3. VARIABLES INICIALES
 // ==========================================
 
 $titulo = '';
 $descripcion = '';
 $preguntasGeneradas = [];
 $mensaje = '';
-$tipoMensaje = ''; 
+$tipoMensaje = '';
 
-// A) Procesar PDF
+// ==========================================
+// A) PROCESAR PDF
+// ==========================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file']) && $_FILES['pdf_file']['error'] === 0) {
     try {
         $parser = new \Smalot\PdfParser\Parser();
         $pdf = $parser->parseFile($_FILES['pdf_file']['tmp_name']);
-        
-        // Obtener texto y FORZAR UTF-8
+
         $text = $pdf->getText();
         if (!mb_check_encoding($text, 'UTF-8')) {
             $text = mb_convert_encoding($text, 'UTF-8', 'auto');
         }
-        
+
         $preguntasGeneradas = procesarTextoCuestionario($text);
-        
+
         if (count($preguntasGeneradas) > 0) {
-            $mensaje = "✅ PDF Procesado. Se extrajeron " . count($preguntasGeneradas) . " preguntas.";
+            $mensaje = "PDF procesado con éxito: " . count($preguntasGeneradas) . " preguntas extraídas.";
             $tipoMensaje = 'success';
-            $titulo = "Quiz importado de PDF";
         } else {
-            $mensaje = "⚠️ El PDF se leyó, pero no se detectaron preguntas válidas.";
+            $mensaje = "El PDF fue leído, pero no se detectaron preguntas válidas.";
             $tipoMensaje = 'warning';
         }
+
     } catch (Exception $e) {
-        $mensaje = "❌ Error: " . $e->getMessage();
+        $mensaje = "Error al procesar PDF: " . $e->getMessage();
         $tipoMensaje = 'error';
     }
 }
 
-// B) Generar con IA
+// ==========================================
+// B) GENERAR IA
+// ==========================================
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generar_ia'])) {
     $tema = $_POST['tema_ia'];
     $textoIA = generarPreguntasIA($tema, $geminiApiKey);
-    
-    if (strpos($textoIA, 'Error') === 0) {
-        $mensaje = "❌ " . $textoIA;
+
+    if (strpos($textoIA, "Error") === 0) {
+        $mensaje = $textoIA;
         $tipoMensaje = 'error';
     } else {
         $preguntasGeneradas = procesarTextoCuestionario($textoIA);
-        if (count($preguntasGeneradas) > 0) {
-            $mensaje = "✨ IA Generó " . count($preguntasGeneradas) . " preguntas.";
-            $tipoMensaje = 'success';
-            $titulo = "Quiz sobre " . ucfirst($tema);
-            $descripcion = "Generado por IA. Tema: " . $tema;
-        } else {
-            $mensaje = "⚠️ La IA respondió con un formato desconocido.";
-            $tipoMensaje = 'warning';
-        }
+        $mensaje = "IA generó " . count($preguntasGeneradas) . " preguntas.";
+        $tipoMensaje = 'success';
+        $titulo = "Quiz sobre " . ucfirst($tema);
+        $descripcion = "Generado automáticamente.";
     }
 }
 
-// C) Guardar en BD
+// ==========================================
+// C) GUARDAR QUIZ (BLOQUE REINDEXADO Y CORREGIDO)
+// ==========================================
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
+
     require 'db.php';
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     try {
         $pdo->beginTransaction();
 
-        $stmt = $pdo->prepare("INSERT INTO quizzes (titulo, descripcion, color_primario, color_secundario, valor_total, fecha_inicio, fecha_fin, duracion_minutos, creado_por) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        
-        $creado_por = $_SESSION['usuario']['id'] ?? 1; 
+        // Insert quiz
+        $stmt = $pdo->prepare(
+            "INSERT INTO quizzes (titulo, descripcion, color_primario, color_secundario, valor_total, fecha_inicio, fecha_fin, duracion_minutos, creado_por)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        );
+
+        $creado_por = $_SESSION['usuario']['id'] ?? 1;
 
         $stmt->execute([
             $_POST['titulo'],
@@ -208,42 +200,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
             $_POST['duracion_minutos'],
             $creado_por
         ]);
-        
+
         $quiz_id = $pdo->lastInsertId();
 
-        if (isset($_POST['pregunta_texto'])) {
-            foreach ($_POST['pregunta_texto'] as $index => $textoPregunta) {
-                $stmtP = $pdo->prepare("INSERT INTO preguntas (quiz_id, texto, valor) VALUES (?, ?, ?)");
-                $stmtP->execute([$quiz_id, $textoPregunta, $_POST['pregunta_valor'][$index]]);
-                $pregunta_id = $pdo->lastInsertId();
+        // ===============================
+        // REINDEXAR ARRAYS PARA EVITAR ERRORES
+        // ===============================
+        $preguntasTexto  = array_values($_POST['pregunta_texto']);
+        $preguntasValor  = array_values($_POST['pregunta_valor']);
+        $respuestasTexto = isset($_POST['respuesta_texto']) ? array_values($_POST['respuesta_texto']) : [];
+        $respuestasCorr  = isset($_POST['respuesta_correcta']) ? array_values($_POST['respuesta_correcta']) : [];
 
-                if (isset($_FILES['pregunta_imagen']['name'][$index]) && $_FILES['pregunta_imagen']['name'][$index]) {
-                    if (!is_dir('assets/images')) mkdir('assets/images', 0777, true);
-                    $ext = pathinfo($_FILES['pregunta_imagen']['name'][$index], PATHINFO_EXTENSION);
-                    $nombreImagen = 'p_' . $pregunta_id . '_' . time() . '.' . $ext;
-                    move_uploaded_file($_FILES['pregunta_imagen']['tmp_name'][$index], 'assets/images/' . $nombreImagen);
-                    
-                    $stmtUpdate = $pdo->prepare("UPDATE preguntas SET imagen = ? WHERE id = ?");
-                    $stmtUpdate->execute([$nombreImagen, $pregunta_id]);
-                }
+        // ===============================
+        // PROCESAR CADA PREGUNTA
+        // ===============================
+        $stmtPregunta = $pdo->prepare("INSERT INTO preguntas (quiz_id, texto, valor) VALUES (?, ?, ?)");
+        $stmtRespuesta = $pdo->prepare("INSERT INTO opciones (pregunta_id, texto, es_correcta) VALUES (?, ?, ?)");
 
-                if (isset($_POST['respuesta_texto'][$index])) {
-                    $stmtR = $pdo->prepare("INSERT INTO opciones (pregunta_id, texto, es_correcta) VALUES (?, ?, ?)");
-                    foreach ($_POST['respuesta_texto'][$index] as $respIndex => $textoRespuesta) {
-                        $esCorrecta = isset($_POST['respuesta_correcta'][$index][$respIndex]) ? 1 : 0;
-                        $stmtR->execute([$pregunta_id, $textoRespuesta, $esCorrecta]);
-                    }
-                }
+        foreach ($preguntasTexto as $i => $textoPregunta) {
+
+            if (trim($textoPregunta) === '') continue;
+
+            $valorPregunta = $preguntasValor[$i] ?? 0;
+
+            // Insert pregunta
+            $stmtPregunta->execute([$quiz_id, $textoPregunta, $valorPregunta]);
+            $pregunta_id = $pdo->lastInsertId();
+
+            // Imagen
+            if (!empty($_FILES['pregunta_imagen']['name'][$i])) {
+                if (!is_dir('assets/images')) mkdir('assets/images', 0777, true);
+                $ext = pathinfo($_FILES['pregunta_imagen']['name'][$i], PATHINFO_EXTENSION);
+                $nombreImagen = "p_{$pregunta_id}_" . time() . "." . $ext;
+
+                move_uploaded_file($_FILES['pregunta_imagen']['tmp_name'][$i], "assets/images/" . $nombreImagen);
+
+                $pdo->prepare("UPDATE preguntas SET imagen = ? WHERE id = ?")
+                    ->execute([$nombreImagen, $pregunta_id]);
+            }
+
+            // Respuestas
+            $listaRespuestas = $respuestasTexto[$i] ?? [];
+            $listaCorrectas  = $respuestasCorr[$i] ?? [];
+
+            foreach ($listaRespuestas as $rIndex => $textoResp) {
+                if (trim($textoResp) === '') continue;
+
+                $esCorrecta = isset($listaCorrectas[$rIndex]) ? 1 : 0;
+
+                $stmtRespuesta->execute([
+                    $pregunta_id,
+                    $textoResp,
+                    $esCorrecta
+                ]);
             }
         }
 
+        // COMMIT
         $pdo->commit();
-        echo "<script>alert('¡Quiz guardado correctamente!'); window.location.href = 'profesor.php';</script>";
+
+        echo "<script>alert('¡Quiz guardado correctamente!'); window.location.href='profesor.php';</script>";
         exit;
 
-    } catch (Exception $e) {
+    } catch (PDOException $e) {
         $pdo->rollBack();
-        $mensaje = "Error BD: " . $e->getMessage();
+        $mensaje = "Error SQL Detallado: " . $e->getMessage();
         $tipoMensaje = 'error';
     }
 }
