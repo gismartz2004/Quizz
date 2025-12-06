@@ -84,9 +84,9 @@ if (isset($_GET['quiz'])) {
                         <option value="">Selecciona...</option>
                         <option value="Masculino">Masculino</option>
                         <option value="Femenino">Femenino</option>
-                        <option value="Otro">Otro</option>
+                        <option value="Otro">Prefiero no decirlo</option>
                     </select>
-                    <label>Residencia (Ciudad)</label><input type="text" name="residencia" required>
+                    <label>Dirección</label><input type="text" name="residencia" required>
                     <label>Discapacidad</label>
                     <select name="discapacidad" required>
                         <option value="Ninguna">Ninguna</option>
