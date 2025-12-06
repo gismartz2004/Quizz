@@ -235,19 +235,7 @@ $lista_estudiantes = $stmtList->fetchAll();
 </head>
 <body>
 
-    <nav class="sidebar" id="sidebar">
-        <div class="logo-area">
-            <i class="fas fa-graduation-cap fa-lg"></i>
-            <span style="font-weight: 700; font-size: 1.2rem;">Profesor</span>
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 5px;">
-            <a href="profesor.php" class="nav-item"><i class="fas fa-th-large"></i> Mis Quizzes</a>
-            <a href="usuarios.php" class="nav-item active"><i class="fas fa-user-graduate"></i> Estudiantes</a>
-            <a href="resultados/dashboard.php" class="nav-item"><i class="fas fa-chart-pie"></i> Resultados</a>
-            <a href="crear.php" class="nav-item"><i class="fas fa-plus-circle"></i> Nuevo Quiz</a>
-            <a href="logout.php" class="nav-item logout" style="margin-top: 20px; color: var(--danger);"><i class="fas fa-sign-out-alt"></i> Salir</a>
-        </div>
-    </nav>
+    <?php $page = 'usuarios'; include 'includes/sidebar_profesor.php'; ?>
 
     <div class="main-wrapper">
         

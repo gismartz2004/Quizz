@@ -91,6 +91,7 @@ try {
 <html lang="es">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel Profesor</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
@@ -103,14 +104,23 @@ try {
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Inter', sans-serif; background: var(--bg-body); color: var(--text-main); display: flex; min-height: 100vh; }
         
-        /* SIDEBAR */
-        .sidebar { width: var(--sidebar-width); background: var(--bg-sidebar); color: white; position: fixed; height: 100vh; padding: 24px; z-index: 50; }
+        /* SIDEBAR COMPARTIDO */
+        .sidebar { 
+            width: var(--sidebar-width); background: var(--bg-sidebar); color: white; 
+            position: fixed; height: 100vh; padding: 24px; z-index: 100; 
+            transition: transform 0.3s ease-in-out;
+        }
+        .logo-area { display: flex; align-items: center; gap: 10px; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px; color: #94a3b8; text-decoration: none; border-radius: 8px; margin-bottom: 5px; transition: 0.2s; }
         .nav-item:hover, .nav-item.active { background: var(--primary); color: white; }
         
         /* MAIN CONTENT */
-        .main-wrapper { margin-left: var(--sidebar-width); width: calc(100% - var(--sidebar-width)); padding: 30px; }
+        .main-wrapper { margin-left: var(--sidebar-width); width: calc(100% - var(--sidebar-width)); padding: 30px; transition: margin 0.3s; }
         
+        /* HEADER MOBILE */
+        .header-mobile { display: none; align-items: center; gap: 15px; margin-bottom: 20px; }
+        .toggle-btn { background: none; border: none; font-size: 1.5rem; color: var(--text-main); cursor: pointer; }
+
         /* GRID */
         .quiz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 24px; margin-top: 30px; }
         .quiz-card { background: white; border-radius: 12px; border: 1px solid var(--border-color); overflow: hidden; display: flex; flex-direction: column; transition: transform 0.2s; }
@@ -144,23 +154,28 @@ try {
         .p-row { margin-bottom: 15px; border-bottom: 1px solid #f1f5f9; padding-bottom: 10px; }
         .p-opt { padding: 5px 10px; background: #f8fafc; margin-top: 5px; border-radius: 4px; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; }
         .p-opt.correct { background: #dcfce7; color: #15803d; }
+
+        /* RESPONSIVE */
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); }
+            .sidebar.open { transform: translateX(0); }
+            .main-wrapper { margin-left: 0; width: 100%; padding: 15px; }
+            .header-mobile { display: flex; }
+            h1 { font-size: 1.5rem; }
+        }
     </style>
 </head>
 <body>
 
-    <nav class="sidebar">
-        <div style="margin-bottom:40px; font-size:1.2rem; font-weight:700;">
-            <i class="fas fa-graduation-cap" style="color:#818cf8"></i> Profesor
-        </div>
-        <a href="profesor.php" class="nav-item active"><i class="fas fa-th-large"></i> Mis Quizzes</a>
-        <a href="crear.php" class="nav-item"><i class="fas fa-plus-circle"></i> Nuevo Quiz</a>
-        <a href="usuarios.php" class="nav-item"><i class="fas fa-user-graduate"></i> Estudiantes</a>
-        <a href="resultados/dashboard.php" class="nav-item"><i class="fas fa-chart-pie"></i>Resultados</a>
-        <a href="logout.php" class="nav-item" style="margin-top:auto; color:#ef4444;"><i class="fas fa-sign-out-alt"></i> Salir</a>
-    </nav>
+    <?php $page = 'quizzes'; include 'includes/sidebar_profesor.php'; ?>
 
     <div class="main-wrapper">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div class="header-mobile">
+            <button class="toggle-btn" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+            <h2 style="margin:0;">AulaVirtual</h2>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
             <h1>Panel de Control</h1>
             <a href="crear.php" class="btn-edit btn-action" style="flex:none; padding: 10px 20px;"><i class="fas fa-plus"></i> Crear Nuevo</a>
         </div>
@@ -210,6 +225,10 @@ try {
     </div>
 
     <script>
+        function toggleSidebar() { 
+            document.getElementById('sidebar').classList.toggle('open'); 
+        }
+
         // Función AJAX para cargar preguntas solo cuando se necesitan
         function cargarVistaPrevia(id, titulo) {
             const modal = document.getElementById('modalPreview');

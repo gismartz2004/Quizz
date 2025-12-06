@@ -5,7 +5,8 @@ RUN apt-get update && apt-get install -y \
     git \
     unzip \
     libzip-dev \
-    && docker-php-ext-install zip pdo pdo_mysql mysqli
+    libpq-dev \
+    && docker-php-ext-install zip pdo pdo_mysql pdo_pgsql mysqli
 
 # 2. Instalar Composer (copiándolo de la imagen oficial)
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer

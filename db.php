@@ -1,20 +1,25 @@
 <?php
-// db.php - Conexión Optimizada para Latencia
+// db.php - Conexión a Neon.tech (PostgreSQL)
 
-$host = '195.35.61.56'; // IP de Hostinger
-$db   = 'u578800031_Quizz';
-$user = 'u578800031_Sistema_quizz';
-$pass = 'Desarrollosoftware2025';
-$charset = 'utf8mb4';
+// Tus credenciales de Neon
+$host = 'ep-mute-base-aduqpged-pooler.c-2.us-east-1.aws.neon.tech';
+$db   = 'neondb';
+$user = 'neondb_owner';
+$pass = 'npg_ykdPhQnR50gZ';
+$port = '5432';
 
 try {
-    $pdo = new PDO("mysql:host=$host;dbname=$db;charset=$charset", $user, $pass, [
+    $dsn = "pgsql:host=$host;port=$port;dbname=$db;sslmode=require";
+    
+    $options = [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES => false,
-        // ESTA LÍNEA ES LA MAGIA: Mantiene la conexión abierta
-        PDO::ATTR_PERSISTENT => true 
-    ]);
+        PDO::ATTR_PERSISTENT => true
+    ];
+
+    $pdo = new PDO($dsn, $user, $pass, $options);
+
 } catch (\PDOException $e) {
     die("Error de conexión: " . $e->getMessage());
 }
