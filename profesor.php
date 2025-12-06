@@ -155,7 +155,7 @@ try {
         <a href="profesor.php" class="nav-item active"><i class="fas fa-th-large"></i> Mis Quizzes</a>
         <a href="crear.php" class="nav-item"><i class="fas fa-plus-circle"></i> Nuevo Quiz</a>
         <a href="usuarios.php" class="nav-item"><i class="fas fa-user-graduate"></i> Estudiantes</a>
-        <!-- <a href="resultados/dashboard.php" class="nav-item"><i class="fas fa-chart-pie"></i>Resultados</a> -->
+        <a href="resultados/dashboard.php" class="nav-item"><i class="fas fa-chart-pie"></i>Resultados</a>
         <a href="logout.php" class="nav-item" style="margin-top:auto; color:#ef4444;"><i class="fas fa-sign-out-alt"></i> Salir</a>
     </nav>
 

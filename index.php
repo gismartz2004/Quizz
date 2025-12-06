@@ -115,31 +115,54 @@ if (isset($_GET['quiz'])) {
     $tiempoRestante = $duracionSegundos - $tiempoTranscurrido;
     if ($tiempoRestante <= 0) $tiempoRestante = 0; 
 
-    // --- CARGA INTELIGENTE DE PREGUNTAS (SOLO 25 ALEATORIAS) ---
+    // ... (Tu código de sesión y timer anterior sigue igual) ...
+
+    // --- CARGA INTELIGENTE SEGMENTADA (23 de un grupo + 2 del otro) ---
     if (!isset($_SESSION['quiz_questions_' . $quizId])) {
-        // 1. Traer TODAS las preguntas del quiz
-        $stmtP = $pdo->prepare("SELECT * FROM preguntas WHERE quiz_id = ?");
+        
+        // 1. Traer TODAS las preguntas (importante ORDENAR por ID para definir cuáles son las "primeras" y "últimas")
+        $stmtP = $pdo->prepare("SELECT * FROM preguntas WHERE quiz_id = ? ORDER BY id ASC");
         $stmtP->execute([$quizId]);
         $todasLasPreguntas = $stmtP->fetchAll(PDO::FETCH_ASSOC);
+
+        // VALIDACIÓN: Asegurarnos de que hay suficientes preguntas, si no, evitar errores
+        $totalPreguntas = count($todasLasPreguntas);
         
-        // 2. Mezclar
-        shuffle($todasLasPreguntas);
+        // 2. SEPARAR LOS GRUPOS (Slicing)
+        // Grupo A: Las primeras 50 preguntas (índices 0 a 49)
+        $grupoA = array_slice($todasLasPreguntas, 0, 50); 
         
-        // 3. Cortar solo las necesarias (ej: 25)
-        // Si hay menos de 25, las toma todas.
-        $preguntasSeleccionadas = array_slice($todasLasPreguntas, 0, $limitQuestions);
-        
-        // 4. Cargar opciones SOLO para esas 25 preguntas (Optimización)
-        foreach ($preguntasSeleccionadas as &$p) {
+        // Grupo B: Las preguntas restantes (índices 50 en adelante, deberían ser las últimas 10)
+        $grupoB = array_slice($todasLasPreguntas, 50); 
+
+        // 3. SELECCIONAR ALEATORIAS DEL GRUPO A (Objetivo: 23)
+        shuffle($grupoA); // Mezclamos solo el grupo A
+        // Tomamos 23, o menos si no hay suficientes
+        $seleccionA = array_slice($grupoA, 0, 23);
+
+        // 4. SELECCIONAR ALEATORIAS DEL GRUPO B (Objetivo: 2)
+        shuffle($grupoB); // Mezclamos solo el grupo B
+        // Tomamos 2, o menos si no hay suficientes
+        $seleccionB = array_slice($grupoB, 0, 2);
+
+        // 5. UNIFICAR LOS DOS GRUPOS
+        $preguntasFinales = array_merge($seleccionA, $seleccionB);
+
+        // (Opcional) Mezclar el resultado final para que las 2 preguntas "difíciles" 
+        // no aparezcan siempre al final del examen.
+        shuffle($preguntasFinales);
+
+        // 6. CARGAR OPCIONES (Solo para las 25 finales)
+        foreach ($preguntasFinales as &$p) {
             $stmtO = $pdo->prepare("SELECT id, texto, imagen FROM opciones WHERE pregunta_id = ?");
             $stmtO->execute([$p['id']]);
             $p['respuestas'] = $stmtO->fetchAll(PDO::FETCH_ASSOC);
         }
-        
-        // 5. Guardar en sesión para que no cambien al recargar
-        $_SESSION['quiz_questions_' . $quizId] = $preguntasSeleccionadas;
+
+        // 7. GUARDAR EN SESIÓN
+        $_SESSION['quiz_questions_' . $quizId] = $preguntasFinales;
     }
-    
+
     $preguntasMostrar = $_SESSION['quiz_questions_' . $quizId];
     ?>
 
