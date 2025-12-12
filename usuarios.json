@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "email": "alumno@ejemplo.com",
+    "password": "123456",
+    "rol": "estudiante",
+    "nombre":"Jostin Duarte"
+    
+  },
+  {
+    "id": 2,
+    "email": "profe@ejemplo.com",
+    "password": "123456",
+    "rol": "profesor",
+    "nombre":"Daniel Calderon"
+  }
+]

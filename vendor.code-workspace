@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "vendor",
+			"path": "../../php/vendor"
+		},
+		{
+			"name": "Evaluation",
+			"path": "."
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,75 @@
+[
+    {
+        "usuario_id": 1,
+        "usuario_nombre": "Juan Perez",
+        "quiz_id": "quiz_1762270455",
+        "quiz_titulo": "Gismar",
+        "fecha": "2025-11-04 20:02:41",
+        "puntos_obtenidos": 10,
+        "puntos_totales": "100",
+        "porcentaje": 10,
+        "detalle_resultados": [
+            {
+                "pregunta": "Hola",
+                "valor_pregunta": "10",
+                "tu_respuesta": "hjola",
+                "respuesta_correcta": "hjola",
+                "es_correcta": true
+            }
+        ]
+    },
+    {
+        "usuario_id": 1,
+        "usuario_nombre": "Juan Perez",
+        "quiz_id": "quiz_1763692691",
+        "quiz_titulo": "Matematicas basicas",
+        "fecha": "2025-11-21 03:38:40",
+        "puntos_obtenidos": 60,
+        "puntos_totales": "100",
+        "porcentaje": 60,
+        "detalle_resultados": [
+            {
+                "pregunta": "\u00bfCu\u00e1nto es la suma de 15 + 15?",
+                "valor_pregunta": "10",
+                "tu_respuesta": "20",
+                "respuesta_correcta": "20",
+                "es_correcta": true
+            },
+            {
+                "pregunta": "10",
+                "valor_pregunta": "10",
+                "tu_respuesta": "3.1416",
+                "respuesta_correcta": "3.1416",
+                "es_correcta": true
+            },
+            {
+                "pregunta": "\u00bfC\u00f3mo se calcula el \u00e1rea de un cuadrado?",
+                "valor_pregunta": "10",
+                "tu_respuesta": "Base por altura",
+                "respuesta_correcta": "Base por altura",
+                "es_correcta": true
+            },
+            {
+                "pregunta": "Si tienes 3 manzanas y te comes 1, \u00bfcu\u00e1ntas quedan?",
+                "valor_pregunta": "10",
+                "tu_respuesta": "1",
+                "respuesta_correcta": "1",
+                "es_correcta": true
+            },
+            {
+                "pregunta": "\u00bfCu\u00e1l es la ra\u00edz cuadrada de 81?",
+                "valor_pregunta": "10",
+                "tu_respuesta": "8",
+                "respuesta_correcta": "8",
+                "es_correcta": true
+            },
+            {
+                "pregunta": "\u00bfCu\u00e1ntos grados tiene un \u00e1ngulo recto?",
+                "valor_pregunta": "10",
+                "tu_respuesta": "45 grados",
+                "respuesta_correcta": "45 grados",
+                "es_correcta": true
+            }
+        ]
+    }
+]
