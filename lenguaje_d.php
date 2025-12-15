@@ -602,6 +602,10 @@ function getScoreBadge($nota) {
                     <option value="B" <?= $paralelo == 'B' ? 'selected' : '' ?>>B</option>
                     <option value="C" <?= $paralelo == 'C' ? 'selected' : '' ?>>C</option>
                     <option value="D" <?= $paralelo == 'D' ? 'selected' : '' ?>>D</option>
+                    <option value="E" <?= $paralelo == 'E' ? 'selected' : '' ?>>E</option>
+                    <option value="F" <?= $paralelo == 'F' ? 'selected' : '' ?>>F</option>
+                    <option value="G" <?= $paralelo == 'G' ? 'selected' : '' ?>>G</option>
+                    <option value="H" <?= $paralelo == 'H' ? 'selected' : '' ?>>H</option>
                 </select>
             </div>
             <div class="col-md-3 d-flex align-items-end gap-2">
@@ -671,6 +675,11 @@ function getScoreBadge($nota) {
                                     <td>
                                         <div class="small"><i class="fas fa-venus-mars text-muted me-1"></i> <?= htmlspecialchars($row['genero'] ?? 'N/A') ?></div>
                                         <div class="small"><i class="fas fa-birthday-cake text-muted me-1"></i> <?= htmlspecialchars($row['edad'] ?? 'N/A') ?> años</div>
+                                        <div class="small"><i class="fas fa-chalkboard text-muted me-1"></i> Paralelo: <?= htmlspecialchars($row['paralelo'] ?? 'N/A') ?></div>
+                                        <div class="small"><i class="fas fa-map-marker-alt text-muted me-1"></i> <?= htmlspecialchars($row['residencia'] ?? 'N/A') ?></div>
+                                        <?php if (!empty($row['discapacidad']) && $row['discapacidad'] !== 'Ninguna'): ?>
+                                            <div class="small"><i class="fas fa-wheelchair text-muted me-1"></i> <?= htmlspecialchars($row['discapacidad']) ?></div>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <div class="fw-bold text-secondary small"><?= htmlspecialchars($row['quiz_titulo']) ?></div>
