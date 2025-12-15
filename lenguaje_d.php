@@ -683,7 +683,7 @@ function getScoreBadge($nota) {
                                     </td>
                                     <td>
                                         <div class="fw-bold text-secondary small"><?= htmlspecialchars($row['quiz_titulo']) ?></div>
-                                        <div class="small text-muted"><?= date('d/m/Y H:i', strtotime($row['fecha_realizacion'])) ?></div>
+                                        <div class="small text-muted"><?= date('d/m/Y', strtotime($row['fecha_realizacion'])) ?></div>
                                         <?php if ($row['nivel_integridad'] !== 'limpio'): ?>
                                             <div class="text-danger small mt-1"><i class="fas fa-exclamation-triangle"></i> <?= $row['intentos_tab_switch'] ?> salidas</div>
                                         <?php endif; ?>
