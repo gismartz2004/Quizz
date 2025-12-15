@@ -11,24 +11,22 @@ if (!isset($_SESSION['usuario']) || $_SESSION['usuario']['rol'] !== 'profesor') 
 // 2. CARGAR LISTA DE QUIZZES
 $quizzes = [];
 try {
-    $stmt = $pdo->query("SELECT id, titulo FROM quizzes where id <> 23 ORDER BY titulo");
+    $stmt = $pdo->query("SELECT id, titulo FROM quizzes ORDER BY titulo");
     $quizzes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     die("Error DB: " . $e->getMessage());
 }
 
 // 3. RECIBIR PARÁMETROS
-// Corrección aquí: eliminé el doble signo $$ que tenías antes
 $quiz_id      = isset($_GET['quiz_id']) && is_numeric($_GET['quiz_id']) ? (int)$_GET['quiz_id'] : null;
 $fecha_desde  = $_GET['fecha_desde'] ?? '';
 $fecha_hasta  = $_GET['fecha_hasta'] ?? '';
 $genero       = $_GET['genero'] ?? '';
 $edad         = isset($_GET['edad']) && is_numeric($_GET['edad']) ? (int)$_GET['edad'] : '';
+$paralelo     = $_GET['paralelo'] ?? '';
 $integridad   = $_GET['integridad'] ?? '';
 
-// ==========================================================
-// CONSULTA 1: ESTUDIANTES QUE YA REALIZARON EL EXAMEN
-// ==========================================================
+// 4. CONSULTA SQL
 $sql = "SELECT 
             r.*, 
             u.nombre as usuario_nombre, 
@@ -53,7 +51,6 @@ if ($fecha_hasta) {
     $sql .= " AND r.fecha_realizacion <= :fecha_hasta";
     $params['fecha_hasta'] = $fecha_hasta . ' 23:59:59';
 }
-// Nuevos filtros (estos campos existen en la tabla 'resultados')
 if ($genero) {
     $sql .= " AND r.genero = :genero";
     $params['genero'] = $genero;
@@ -61,6 +58,10 @@ if ($genero) {
 if ($edad) {
     $sql .= " AND r.edad = :edad";
     $params['edad'] = $edad;
+}
+if ($paralelo) {
+    $sql .= " AND r.paralelo = :paralelo";
+    $params['paralelo'] = $paralelo;
 }
 
 $sql .= " ORDER BY r.fecha_realizacion DESC";
@@ -73,12 +74,13 @@ try {
     die("Error cargando resultados: " . $e->getMessage());
 }
 
-// PROCESAMIENTO DE DATOS (Métricas y Filtro Integridad en PHP)
+// 5. PROCESAMIENTO (Cálculo sobre 100 y Filtros)
 $resultados = [];
 $stats = ['total' => 0, 'aprobados' => 0, 'incidentes' => 0, 'suma_notas' => 0];
+$TOTAL_PUNTOS_POSIBLES = 250; // 25 preguntas x 10 pts
 
 foreach ($resultados_raw as $row) {
-    // Lógica para determinar el nivel de integridad
+    // Integridad
     $swaps = (int)($row['intentos_tab_switch'] ?? 0);
     $time  = (int)($row['segundos_fuera'] ?? 0);
     
@@ -86,34 +88,60 @@ foreach ($resultados_raw as $row) {
     elseif ($swaps <= 2 && $time < 15) $nivel = 'leve';
     else $nivel = 'riesgo';
 
-    // Aplicar filtro de integridad si fue seleccionado
     if ($integridad && $integridad !== $nivel) continue;
 
-    // Agregar datos calculados al row para usar en HTML
+    // Cálculo Nota / 100
+    $puntos_obtenidos = (float)$row['puntos_obtenidos'];
+    $nota_calculada = ($puntos_obtenidos / $TOTAL_PUNTOS_POSIBLES) * 100;
+    $nota_final_100 = round($nota_calculada, 2);
+    if ($nota_final_100 > 100) $nota_final_100 = 100;
+
+    $row['nota_sobre_100'] = $nota_final_100;
     $row['nivel_integridad'] = $nivel;
+    
     $resultados[] = $row;
 
     // Métricas
     $stats['total']++;
-    $stats['suma_notas'] += (float)$row['porcentaje'];
-    if ((float)$row['porcentaje'] >= 70) $stats['aprobados']++;
+    $stats['suma_notas'] += $nota_final_100;
+    if ($nota_final_100 >= 70) $stats['aprobados']++;
     if ($nivel !== 'limpio') $stats['incidentes']++;
 }
 
-$promedio = $stats['total'] > 0 ? round($stats['suma_notas'] / $stats['total'], 1) : 0;
+$promedio = $stats['total'] > 0 ? round($stats['suma_notas'] / $stats['total'], 2) : 0;
 
-// ==========================================================
-// CONSULTA 2: ESTUDIANTES PENDIENTES (SOLO SI SE SELECCIONA UN QUIZ)
-// ==========================================================
+// 7. DATOS PARA GRÁFICOS - Agrupado por Quiz/Materia
+$stats_por_quiz = [];
+foreach ($resultados as $row) {
+    $quiz_titulo = $row['quiz_titulo'];
+    if (!isset($stats_por_quiz[$quiz_titulo])) {
+        $stats_por_quiz[$quiz_titulo] = [
+            'total' => 0,
+            'suma_notas' => 0,
+            'aprobados' => 0
+        ];
+    }
+    $stats_por_quiz[$quiz_titulo]['total']++;
+    $stats_por_quiz[$quiz_titulo]['suma_notas'] += $row['nota_sobre_100'];
+    if ($row['nota_sobre_100'] >= 70) {
+        $stats_por_quiz[$quiz_titulo]['aprobados']++;
+    }
+}
+
+// Calcular promedios
+foreach ($stats_por_quiz as $titulo => &$data) {
+    $data['promedio'] = round($data['suma_notas'] / $data['total'], 2);
+    $data['tasa_aprobacion'] = round(($data['aprobados'] / $data['total']) * 100, 1);
+}
+unset($data);
+
+// 8. PENDIENTES
 $pendientes = [];
 if ($quiz_id) {
-    // Seleccionar usuarios tipo 'estudiante' cuyo ID NO esté en la tabla resultados para este quiz
     $sql_pendientes = "SELECT id, nombre, email, fecha_registro 
                        FROM usuarios 
                        WHERE rol = 'estudiante' 
-                       AND id NOT IN (
-                           SELECT usuario_id FROM resultados WHERE quiz_id = :quiz_id
-                       )
+                       AND id NOT IN (SELECT usuario_id FROM resultados WHERE quiz_id = :quiz_id)
                        ORDER BY nombre ASC";
     try {
         $stmt_p = $pdo->prepare($sql_pendientes);
@@ -124,7 +152,7 @@ if ($quiz_id) {
     }
 }
 
-// HELPERS VISUALES
+// Helpers
 function getScoreBadge($nota) {
     if ($nota >= 90) return 'bg-success-soft text-success';
     if ($nota >= 70) return 'bg-info-soft text-info';
@@ -137,34 +165,413 @@ function getScoreBadge($nota) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reporte Académico Avanzado</title>
+    <title>Reporte Académico | Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        :root { --primary: #4361ee; --bg: #f8fafc; }
-        body { background-color: var(--bg); font-family: system-ui, -apple-system, sans-serif; }
-        .card-custom { border:none; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,0.03); background:white; }
-        .stat-val { font-size: 1.5rem; font-weight: 700; }
-        .bg-success-soft { background: #d1fae5; color: #065f46; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size:0.8rem; }
-        .bg-danger-soft { background: #fee2e2; color: #991b1b; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size:0.8rem; }
-        .bg-info-soft { background: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size:0.8rem; }
-        .nav-tabs .nav-link { color: #64748b; border: none; border-bottom: 2px solid transparent; }
-        .nav-tabs .nav-link.active { color: var(--primary); border-bottom: 2px solid var(--primary); font-weight: 600; }
-        .avatar-initial { width:32px; height:32px; background:#e2e8f0; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:bold; color:#475569; font-size:0.8rem; margin-right:8px; }
+        :root {
+            --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --gradient-success: linear-gradient(135deg, #0cebeb 0%, #20e3b2 100%);
+            --gradient-danger: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            --gradient-info: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            --bg-main: #f0f4f8;
+            --text-primary: #1a202c;
+            --text-secondary: #718096;
+            --card-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+            --card-shadow-hover: 0 20px 60px rgba(0, 0, 0, 0.12);
+        }
+        
+        * {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        body {
+            background: var(--bg-main);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            color: var(--text-primary);
+        }
+        
+        /* Header Styles */
+        .page-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 2rem 0;
+            border-radius: 20px;
+            margin-bottom: 2rem;
+            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.4);
+        }
+        
+        .page-header h4 {
+            color: white;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            margin: 0;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+        
+        .page-header .btn {
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            font-weight: 600;
+            padding: 0.5rem 1.5rem;
+            border-radius: 12px;
+        }
+        
+        .page-header .btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.15);
+        }
+        
+        /* Card Styles */
+        .card-custom {
+            border: none;
+            border-radius: 20px;
+            box-shadow: var(--card-shadow);
+            background: white;
+            overflow: hidden;
+        }
+        
+        .card-custom:hover {
+            box-shadow: var(--card-shadow-hover);
+            transform: translateY(-5px);
+        }
+        
+        /* Stat Cards */
+        .stat-card {
+            position: relative;
+            padding: 1.5rem;
+            border-radius: 20px;
+            overflow: hidden;
+            color: white;
+            box-shadow: var(--card-shadow);
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            opacity: 0.9;
+            z-index: 1;
+        }
+        
+        .stat-card.primary::before { background: var(--gradient-primary); }
+        .stat-card.success::before { background: var(--gradient-success); }
+        .stat-card.danger::before { background: var(--gradient-danger); }
+        .stat-card.info::before { background: var(--gradient-info); }
+        
+        .stat-card > * { position: relative; z-index: 2; }
+        
+        .stat-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.95;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-val {
+            font-size: 2.5rem;
+            font-weight: 800;
+            line-height: 1;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .stat-icon {
+            position: absolute;
+            right: 1.5rem;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 3rem;
+            opacity: 0.2;
+        }
+        
+        /* Filter Form */
+        .filter-form {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 20px;
+            box-shadow: var(--card-shadow);
+        }
+        
+        .form-label {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+        
+        .form-select, .form-control {
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 0.65rem 1rem;
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+        
+        .form-select:focus, .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 12px;
+            padding: 0.65rem 1.5rem;
+            font-weight: 700;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+        
+        .btn-light {
+            background: #f7fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            padding: 0.65rem 1.5rem;
+        }
+        
+        .btn-light:hover {
+            background: #edf2f7;
+            border-color: #cbd5e0;
+        }
+        
+        /* Tabs */
+        .nav-tabs {
+            border: none;
+            background: white;
+            padding: 0.5rem;
+            border-radius: 15px;
+            box-shadow: var(--card-shadow);
+        }
+        
+        .nav-tabs .nav-link {
+            border: none;
+            color: var(--text-secondary);
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 10px;
+            margin: 0 0.25rem;
+        }
+        
+        .nav-tabs .nav-link:hover {
+            background: #f7fafc;
+            color: var(--text-primary);
+        }
+        
+        .nav-tabs .nav-link.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .nav-tabs .badge {
+            background: rgba(255, 255, 255, 0.9);
+            color: #667eea;
+            font-weight: 700;
+            padding: 0.25rem 0.6rem;
+            border-radius: 8px;
+        }
+        
+        .nav-tabs .nav-link.active .badge {
+            background: rgba(255, 255, 255, 0.3);
+            color: white;
+        }
+        
+        /* Table */
+        .table {
+            color: var(--text-primary);
+        }
+        
+        .table thead {
+            background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+        }
+        
+        .table thead th {
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            border: none;
+            padding: 1rem;
+        }
+        
+        .table tbody tr {
+            border-bottom: 1px solid #f0f4f8;
+        }
+        
+        .table tbody tr:hover {
+            background: linear-gradient(90deg, rgba(102, 126, 234, 0.03) 0%, rgba(118, 75, 162, 0.03) 100%);
+        }
+        
+        .table tbody td {
+            padding: 1.25rem 1rem;
+            vertical-align: middle;
+            border: none;
+        }
+        
+        /* Badges */
+        .bg-success-soft {
+            background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%);
+            color: #065f46;
+            padding: 0.5rem 1rem;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            display: inline-block;
+            box-shadow: 0 4px 15px rgba(150, 230, 161, 0.4);
+        }
+        
+        .bg-danger-soft {
+            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+            color: #991b1b;
+            padding: 0.5rem 1rem;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            display: inline-block;
+            box-shadow: 0 4px 15px rgba(252, 182, 159, 0.4);
+        }
+        
+        .bg-info-soft {
+            background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
+            color: #1e40af;
+            padding: 0.5rem 1rem;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            display: inline-block;
+            box-shadow: 0 4px 15px rgba(161, 196, 253, 0.4);
+        }
+        
+        /* Avatar */
+        .avatar-initial {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            color: white;
+            font-size: 1.1rem;
+            margin-right: 1rem;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        /* Buttons */
+        .btn-outline-primary {
+            border: 2px solid #667eea;
+            color: #667eea;
+            border-radius: 12px;
+            font-weight: 600;
+            padding: 0.5rem 1.25rem;
+        }
+        
+        .btn-outline-primary:hover {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-color: transparent;
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        /* Modal */
+        .modal-content {
+            border: none;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 20px 20px 0 0;
+            padding: 1.5rem;
+        }
+        
+        .modal-title {
+            font-weight: 700;
+        }
+        
+        .modal-footer {
+            border-top: 1px solid #f0f4f8;
+            padding: 1.25rem;
+        }
+        
+        .btn-secondary {
+            background: #e2e8f0;
+            border: none;
+            color: var(--text-secondary);
+            font-weight: 600;
+            border-radius: 12px;
+        }
+        
+        .btn-secondary:hover {
+            background: #cbd5e0;
+            color: var(--text-primary);
+        }
+        
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .card-custom, .stat-card, .filter-form {
+            animation: fadeInUp 0.5s ease-out;
+        }
+        
+        /* Spinner */
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+            border-width: 0.3rem;
+        }
     </style>
 </head>
 <body>
 
 <div class="container py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h4 class="fw-bold m-0 text-dark"><i class="fas fa-chart-pie me-2 text-primary"></i>Reporte Académico</h4>
-        <a href="profesor.php" class="btn btn-outline-secondary btn-sm">Volver</a>
+    <div class="page-header">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center">
+                <h4><i class="fas fa-chart-line me-3"></i>Reporte Académico</h4>
+                <a href="profesor.php" class="btn">
+                    <i class="fas fa-arrow-left me-2"></i>Volver
+                </a>
+            </div>
+        </div>
     </div>
 
-    <div class="card-custom p-4 mb-4">
+    <div class="filter-form mb-4">
         <form method="GET" class="row g-3">
             <div class="col-md-3">
-                <label class="form-label small fw-bold text-muted">Examen (Requerido para pendientes)</label>
+                <label class="form-label small fw-bold text-muted">Examen</label>
                 <select name="quiz_id" class="form-select form-select-sm" onchange="this.form.submit()">
                     <option value="">-- Todos los exámenes --</option>
                     <?php foreach ($quizzes as $q): ?>
@@ -184,63 +591,51 @@ function getScoreBadge($nota) {
                 </select>
             </div>
             <div class="col-md-2">
-                <label class="form-label small fw-bold text-muted">Edad Exacta</label>
+                <label class="form-label small fw-bold text-muted">Edad</label>
                 <input type="number" name="edad" class="form-control form-control-sm" value="<?= htmlspecialchars($edad) ?>" placeholder="Ej: 15">
             </div>
             <div class="col-md-2">
-                <label class="form-label small fw-bold text-muted">Integridad</label>
-                <select name="integridad" class="form-select form-select-sm">
+                <label class="form-label small fw-bold text-muted">Paralelo</label>
+                <select name="paralelo" class="form-select form-select-sm">
                     <option value="">Todos</option>
-                    <option value="limpio" <?= $integridad == 'limpio' ? 'selected' : '' ?>>Limpio</option>
-                    <option value="riesgo" <?= $integridad == 'riesgo' ? 'selected' : '' ?>>Con Sospecha</option>
+                    <option value="A" <?= $paralelo == 'A' ? 'selected' : '' ?>>A</option>
+                    <option value="B" <?= $paralelo == 'B' ? 'selected' : '' ?>>B</option>
+                    <option value="C" <?= $paralelo == 'C' ? 'selected' : '' ?>>C</option>
+                    <option value="D" <?= $paralelo == 'D' ? 'selected' : '' ?>>D</option>
                 </select>
             </div>
             <div class="col-md-3 d-flex align-items-end gap-2">
-                <button type="submit" class="btn btn-primary btn-sm flex-grow-1"><i class="fas fa-filter me-1"></i> Filtrar</button>
-                <a href="?" class="btn btn-light btn-sm"><i class="fas fa-times"></i> Limpiar</a>
+                <button type="submit" class="btn btn-primary btn-sm flex-grow-1">Filtrar</button>
+                <a href="?" class="btn btn-light btn-sm">Limpiar</a>
             </div>
         </form>
     </div>
 
     <ul class="nav nav-tabs mb-4" id="reportTabs" role="tablist">
-        <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="results-tab" data-bs-toggle="tab" data-bs-target="#results" type="button" role="tab">
-                Resultados Completados <span class="badge bg-secondary rounded-pill ms-1"><?= $stats['total'] ?></span>
-            </button>
+        <li class="nav-item">
+            <button class="nav-link active" id="results-tab" data-bs-toggle="tab" data-bs-target="#results">Resultados <span class="badge bg-secondary ms-1"><?= $stats['total'] ?></span></button>
         </li>
-        <li class="nav-item" role="presentation">
-            <button class="nav-link" id="pending-tab" data-bs-toggle="tab" data-bs-target="#pending" type="button" role="tab">
-                Estudiantes Pendientes 
-                <?php if ($quiz_id): ?>
-                    <span class="badge bg-danger rounded-pill ms-1"><?= count($pendientes) ?></span>
-                <?php else: ?>
-                    <small class="text-muted fst-italic ms-1">(Selecciona examen)</small>
-                <?php endif; ?>
-            </button>
+        <li class="nav-item">
+            <button class="nav-link" id="pending-tab" data-bs-toggle="tab" data-bs-target="#pending">Pendientes</button>
         </li>
     </ul>
 
     <div class="tab-content" id="reportTabsContent">
-        
-        <div class="tab-pane fade show active" id="results" role="tabpanel">
+        <div class="tab-pane fade show active" id="results">
             
-            <div class="row mb-4">
-                <div class="col-md-3">
-                    <div class="card-custom p-3 border-start border-4 border-primary">
-                        <small class="text-muted text-uppercase fw-bold">Promedio</small>
-                        <div class="stat-val text-primary"><?= $promedio ?>%</div>
+            <div class="row mb-4 g-4">
+                <div class="col-md-6">
+                    <div class="stat-card primary">
+                        <div class="stat-label">Promedio General</div>
+                        <div class="stat-val"><?= $promedio ?><small style="font-size:1.5rem;opacity:0.8">/100</small></div>
+                        <i class="fas fa-chart-line stat-icon"></i>
                     </div>
                 </div>
-                <div class="col-md-3">
-                    <div class="card-custom p-3 border-start border-4 border-success">
-                        <small class="text-muted text-uppercase fw-bold">Aprobados</small>
-                        <div class="stat-val text-success"><?= $stats['aprobados'] ?></div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="card-custom p-3 border-start border-4 border-danger">
-                        <small class="text-muted text-uppercase fw-bold">Alertas Integridad</small>
-                        <div class="stat-val text-danger"><?= $stats['incidentes'] ?></div>
+                <div class="col-md-6">
+                    <div class="stat-card success">
+                        <div class="stat-label">Estudiantes Aprobados</div>
+                        <div class="stat-val"><?= $stats['aprobados'] ?><small style="font-size:1.5rem;opacity:0.8"> / <?= $stats['total'] ?></small></div>
+                        <i class="fas fa-user-check stat-icon"></i>
                     </div>
                 </div>
             </div>
@@ -253,14 +648,14 @@ function getScoreBadge($nota) {
                                 <th class="ps-4">Estudiante</th>
                                 <th>Demografía</th>
                                 <th>Examen</th>
-                                <th>Integridad</th>
-                                <th class="text-center">Nota</th>
+                                <th>Puntos Reales</th>
+                                <th class="text-center">Nota / 100</th>
                                 <th class="text-end pe-4">Acciones</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (empty($resultados)): ?>
-                                <tr><td colspan="6" class="text-center py-5 text-muted">No hay resultados con estos filtros.</td></tr>
+                                <tr><td colspan="6" class="text-center py-5 text-muted">No hay resultados.</td></tr>
                             <?php else: ?>
                                 <?php foreach ($resultados as $row): ?>
                                 <tr>
@@ -274,36 +669,23 @@ function getScoreBadge($nota) {
                                         </div>
                                     </td>
                                     <td>
-                                        <div class="small">
-                                            <i class="fas fa-venus-mars text-muted me-1"></i> <?= htmlspecialchars($row['genero'] ?? 'N/A') ?>
-                                        </div>
-                                        <div class="small">
-                                            <i class="fas fa-birthday-cake text-muted me-1"></i> <?= htmlspecialchars($row['edad'] ?? 'N/A') ?> años
-                                        </div>
+                                        <div class="small"><i class="fas fa-venus-mars text-muted me-1"></i> <?= htmlspecialchars($row['genero'] ?? 'N/A') ?></div>
+                                        <div class="small"><i class="fas fa-birthday-cake text-muted me-1"></i> <?= htmlspecialchars($row['edad'] ?? 'N/A') ?> años</div>
                                     </td>
                                     <td>
                                         <div class="fw-bold text-secondary small"><?= htmlspecialchars($row['quiz_titulo']) ?></div>
                                         <div class="small text-muted"><?= date('d/m/Y H:i', strtotime($row['fecha_realizacion'])) ?></div>
-                                    </td>
-                                    <td>
-                                        <?php if ($row['nivel_integridad'] === 'limpio'): ?>
-                                            <span class="badge bg-light text-secondary border"><i class="fas fa-check me-1"></i> Limpio</span>
-                                        <?php else: ?>
-                                            <div class="text-danger small fw-bold"><i class="fas fa-exclamation-triangle"></i> <?= ucfirst($row['nivel_integridad']) ?></div>
-                                            <div class="small text-muted" style="font-size:0.75rem">
-                                                <?= $row['intentos_tab_switch'] ?> cambios · <?= $row['segundos_fuera'] ?>s fuera
-                                            </div>
+                                        <?php if ($row['nivel_integridad'] !== 'limpio'): ?>
+                                            <div class="text-danger small mt-1"><i class="fas fa-exclamation-triangle"></i> <?= $row['intentos_tab_switch'] ?> salidas</div>
                                         <?php endif; ?>
                                     </td>
+                                    <td class="text-muted"><?= $row['puntos_obtenidos'] ?> / 250</td>
                                     <td class="text-center">
-                                        <span class="<?= getScoreBadge($row['porcentaje']) ?>">
-                                            <?= round($row['porcentaje'], 1) ?>%
-                                        </span>
+                                        <span class="<?= getScoreBadge($row['nota_sobre_100']) ?> fs-6"><?= $row['nota_sobre_100'] ?></span>
                                     </td>
                                     <td class="text-end pe-4">
-                                        <button type="button" class="btn btn-sm btn-outline-secondary"
-                                                onclick="verJustificaciones(<?= (int)$row['id'] ?>)">
-                                            <i class="fas fa-align-left"></i> Justificaciones
+                                        <button class="btn btn-sm btn-outline-primary" onclick="verJustificaciones(<?= $row['id'] ?>)">
+                                            <i class="fas fa-comment-alt me-1"></i> Justificaciones
                                         </button>
                                     </td>
                                 </tr>
@@ -315,22 +697,10 @@ function getScoreBadge($nota) {
             </div>
         </div>
 
-        <div class="tab-pane fade" id="pending" role="tabpanel">
+        <div class="tab-pane fade" id="pending">
             <?php if (!$quiz_id): ?>
-                <div class="text-center py-5">
-                    <div class="text-muted mb-3"><i class="fas fa-arrow-up fa-2x"></i></div>
-                    <h5>Selecciona un examen primero</h5>
-                    <p class="text-muted">Para ver quién falta, necesitamos saber qué examen estás revisando.</p>
-                </div>
+                <div class="text-center py-5"><h5>Selecciona un examen primero</h5></div>
             <?php else: ?>
-                <div class="alert alert-warning border-0 d-flex align-items-center mb-3">
-                    <i class="fas fa-info-circle fs-4 me-3"></i>
-                    <div>
-                        <strong>Nota:</strong> Esta lista muestra estudiantes registrados en el sistema que aún no han completado el examen seleccionado.
-                        <br>No se pueden filtrar por edad/género porque esos datos se capturan <em>durante</em> el examen.
-                    </div>
-                </div>
-
                 <div class="card-custom p-0">
                     <div class="table-responsive">
                         <table class="table table-hover align-middle mb-0">
@@ -338,30 +708,19 @@ function getScoreBadge($nota) {
                                 <tr>
                                     <th class="ps-4">Estudiante</th>
                                     <th>Email</th>
-                                    <th>Fecha Registro</th>
                                     <th class="text-end pe-4">Acción</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <?php if (empty($pendientes)): ?>
-                                    <tr><td colspan="4" class="text-center py-5 text-success"><i class="fas fa-check-circle fa-2x mb-2"></i><br>¡Todos los estudiantes han completado este examen!</td></tr>
+                                    <tr><td colspan="3" class="text-center py-5">Todos completaron el examen.</td></tr>
                                 <?php else: ?>
                                     <?php foreach ($pendientes as $p): ?>
                                     <tr>
-                                        <td class="ps-4 fw-bold text-dark">
-                                            <div class="d-flex align-items-center">
-                                                <div class="avatar-initial bg-warning-subtle text-warning-emphasis">
-                                                    <?= strtoupper(substr($p['nombre'], 0, 1)) ?>
-                                                </div>
-                                                <?= htmlspecialchars($p['nombre']) ?>
-                                            </div>
-                                        </td>
+                                        <td class="ps-4 fw-bold"><?= htmlspecialchars($p['nombre']) ?></td>
                                         <td><?= htmlspecialchars($p['email']) ?></td>
-                                        <td class="text-muted small"><?= date('d/m/Y', strtotime($p['fecha_registro'])) ?></td>
                                         <td class="text-end pe-4">
-                                            <a href="mailto:<?= htmlspecialchars($p['email']) ?>?subject=Recordatorio Examen Pendiente: Examen Pendiente" class="btn btn-sm btn-outline-primary">
-                                                <i class="far fa-envelope"></i> Recordar
-                                            </a>
+                                            <a href="mailto:<?= htmlspecialchars($p['email']) ?>" class="btn btn-sm btn-outline-primary">Recordar</a>
                                         </td>
                                     </tr>
                                     <?php endforeach; ?>
@@ -373,44 +732,254 @@ function getScoreBadge($nota) {
             <?php endif; ?>
         </div>
     </div>
+
+    <!-- Analytics Section -->
+    <?php if (!empty($stats_por_quiz)): ?>
+    <div class="mt-5">
+        <h5 class="fw-bold mb-4">
+            <i class="fas fa-chart-bar me-2" style="color: #667eea;"></i>
+            Análisis de Rendimiento por Materia
+        </h5>
+        
+        <div class="row g-4">
+            <div class="col-md-8">
+                <div class="card-custom p-4">
+                    <h6 class="fw-bold mb-4 text-secondary">
+                        <i class="fas fa-signal me-2"></i>Promedio de Notas por Examen
+                    </h6>
+                    <canvas id="chartPromedios" height="80"></canvas>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card-custom p-4">
+                    <h6 class="fw-bold mb-4 text-secondary">
+                        <i class="fas fa-percentage me-2"></i>Tasa de Aprobación
+                    </h6>
+                    <canvas id="chartAprobacion" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<!-- Modal para ver justificaciones -->
 <div class="modal fade" id="justificacionesModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title"><i class="fas fa-comment-dots me-2 text-primary"></i>Justificaciones del estudiante</h5>
+                <h5 class="modal-title"><i class="fas fa-comment-dots me-2 text-primary"></i>Justificaciones</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body" id="justificacionesBody">
-                <div class="text-center py-4 text-muted">Cargando justificaciones...</div>
+                <div class="text-center py-4 text-muted">Cargando...</div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
             </div>
         </div>
     </div>
-    </div>
+</div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 function verJustificaciones(resultadoId) {
     const modalEl = document.getElementById('justificacionesModal');
     const bodyEl = document.getElementById('justificacionesBody');
-    bodyEl.innerHTML = '<div class="text-center py-4 text-muted">Cargando justificaciones...</div>';
+    bodyEl.innerHTML = '<div class="text-center py-4 text-muted"><div class="spinner-border text-primary"></div><p>Cargando justificaciones...</p></div>';
+    
     const modal = new bootstrap.Modal(modalEl);
     modal.show();
 
-    fetch('detalles_justificaciones.php?resultado_id=' + encodeURIComponent(resultadoId))
+    // Llamada AJAX al archivo auxiliar
+    fetch('detalles_justificaciones.php?resultado_id=' + resultadoId)
         .then(res => res.text())
         .then(html => {
             bodyEl.innerHTML = html;
         })
         .catch(() => {
-            bodyEl.innerHTML = '<div class="alert alert-danger">No se pudieron cargar las justificaciones.</div>';
+            bodyEl.innerHTML = '<div class="alert alert-danger">Error al cargar datos.</div>';
         });
 }
+
+// ============================================
+// GRÁFICOS CON CHART.JS
+// ============================================
+<?php if (!empty($stats_por_quiz)): ?>
+document.addEventListener('DOMContentLoaded', function() {
+    // Datos desde PHP
+    const statsData = <?= json_encode($stats_por_quiz) ?>;
+    
+    // Preparar arrays para los gráficos
+    const materias = Object.keys(statsData);
+    const promedios = materias.map(m => statsData[m].promedio);
+    const totales = materias.map(m => statsData[m].total);
+    const aprobados = materias.map(m => statsData[m].aprobados);
+    
+    // Paleta de colores moderna
+    const gradientColors = [
+        'rgba(102, 126, 234, 0.8)',
+        'rgba(118, 75, 162, 0.8)',
+        'rgba(12, 235, 235, 0.8)',
+        'rgba(32, 227, 178, 0.8)',
+        'rgba(240, 147, 251, 0.8)',
+        'rgba(245, 87, 108, 0.8)',
+        'rgba(79, 172, 254, 0.8)',
+        'rgba(0, 242, 254, 0.8)'
+    ];
+    
+    // ============================================
+    // GRÁFICO 1: Promedios por Examen (Barras)
+    // ============================================
+    const ctxPromedios = document.getElementById('chartPromedios');
+    if (ctxPromedios) {
+        new Chart(ctxPromedios, {
+            type: 'bar',
+            data: {
+                labels: materias,
+                datasets: [{
+                    label: 'Promedio (/100)',
+                    data: promedios,
+                    backgroundColor: gradientColors,
+                    borderColor: gradientColors.map(c => c.replace('0.8', '1')),
+                    borderWidth: 2,
+                    borderRadius: 10,
+                    borderSkipped: false,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        titleFont: { size: 14, weight: 'bold' },
+                        bodyFont: { size: 13 },
+                        callbacks: {
+                            label: function(context) {
+                                const materia = context.label;
+                                const promedio = context.parsed.y;
+                                const total = totales[context.dataIndex];
+                                return [
+                                    `Promedio: ${promedio}/100`,
+                                    `Estudiantes: ${total}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        ticks: {
+                            callback: function(value) {
+                                return value + '/100';
+                            },
+                            font: { weight: 600 }
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            font: { weight: 600, size: 11 },
+                            maxRotation: 45,
+                            minRotation: 45
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ============================================
+    // GRÁFICO 2: Tasa de Aprobación Global (Dona)
+    // ============================================
+    const totalAprobados = aprobados.reduce((a, b) => a + b, 0);
+    const totalEstudiantes = totales.reduce((a, b) => a + b, 0);
+    const totalReprobados = totalEstudiantes - totalAprobados;
+    const tasaAprobacionGlobal = ((totalAprobados / totalEstudiantes) * 100).toFixed(1);
+    
+    const ctxAprobacion = document.getElementById('chartAprobacion');
+    if (ctxAprobacion) {
+        new Chart(ctxAprobacion, {
+            type: 'doughnut',
+            data: {
+                labels: ['Aprobados', 'Reprobados'],
+                datasets: [{
+                    data: [totalAprobados, totalReprobados],
+                    backgroundColor: [
+                        'rgba(32, 227, 178, 0.9)',
+                        'rgba(245, 87, 108, 0.9)'
+                    ],
+                    borderColor: ['#fff', '#fff'],
+                    borderWidth: 3,
+                    hoverOffset: 10
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            font: { size: 12, weight: 600 },
+                            usePointStyle: true,
+                            pointStyle: 'circle'
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        padding: 12,
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label;
+                                const value = context.parsed;
+                                const percentage = ((value / totalEstudiantes) * 100).toFixed(1);
+                                return `${label}: ${value} (${percentage}%)`;
+                            }
+                        }
+                    }
+                },
+                cutout: '70%'
+            },
+            plugins: [{
+                id: 'centerText',
+                beforeDraw: function(chart) {
+                    const ctx = chart.ctx;
+                    ctx.save();
+                    const centerX = (chart.chartArea.left + chart.chartArea.right) / 2;
+                    const centerY = (chart.chartArea.top + chart.chartArea.bottom) / 2;
+                    
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    
+                    ctx.font = 'bold 28px Inter';
+                    ctx.fillStyle = '#1a202c';
+                    ctx.fillText(tasaAprobacionGlobal + '%', centerX, centerY - 10);
+                    
+                    ctx.font = '600 12px Inter';
+                    ctx.fillStyle = '#718096';
+                    ctx.fillText('Aprobación', centerX, centerY + 15);
+                    ctx.restore();
+                }
+            }]
+        });
+    }
+});
+<?php endif; ?>
 </script>
+
 </body>
 </html>
