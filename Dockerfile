@@ -19,22 +19,25 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # 4. Set Working Directory
 WORKDIR /var/www/html
 
-# 5. Copy Files (respects .dockerignore)
+# 5. Copy entrypoint separately outside app volume path
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+
+# 6. Copy application files (respects .dockerignore)
 COPY . /var/www/html/
 
-# 6. Install Dependencies (Optimized for Production)
+# 7. Install Dependencies (Optimized for Production)
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# 7. Permissions & Scripts
+# 8. Permissions & Scripts
 RUN chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html \
-    && sed -i 's/\r$//' /var/www/html/entrypoint.sh \
-    && chmod +x /var/www/html/entrypoint.sh
+    && sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
-# 8. Environment Defaults
+# 9. Environment Defaults
 ENV PORT=8080
 EXPOSE 8080
 
-# 9. Start Apache via Entrypoint
-ENTRYPOINT ["/var/www/html/entrypoint.sh"]
+# 10. Start Apache via Entrypoint (outside mounted volume)
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["apache2-foreground"]

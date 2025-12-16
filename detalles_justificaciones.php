@@ -9,6 +9,19 @@ if (!isset($_GET['resultado_id']) || !is_numeric($_GET['resultado_id'])) {
 
 $resultadoId = (int)$_GET['resultado_id'];
 
+// Obtener flag 'es_muestra' del resultado
+$esMuestra = false;
+try {
+  $stmtM = $pdo->prepare("SELECT es_muestra FROM resultados WHERE id = :id");
+  $stmtM->execute(['id' => $resultadoId]);
+  $rowM = $stmtM->fetch(PDO::FETCH_ASSOC);
+  if ($rowM && isset($rowM['es_muestra'])) {
+    $esMuestra = (bool)$rowM['es_muestra'];
+  }
+} catch (Exception $e) {
+  // Silencio: si falla, solo no mostramos el check prechequeado
+}
+
 $sql = "
     SELECT 
         p.id AS pregunta_id,
@@ -39,10 +52,27 @@ try {
 }
 
 if (!$rows) {
+    // Incluso si no hay justificaciones, mostramos el control de muestra
+    echo '<div class="d-flex justify-content-between align-items-center mb-3">'
+        . '<h6 class="m-0">Justificaciones</h6>'
+        . '<div class="form-check form-switch">'
+        . '  <input class="form-check-input" type="checkbox" id="chkMuestra" ' . ($esMuestra ? 'checked' : '') . '>'
+        . '  <label class="form-check-label" for="chkMuestra">Tomado como muestra</label>'
+        . '</div>'
+        . '</div>';
     echo '<div class="text-center py-4 text-muted">No hay preguntas con justificación para este examen.</div>';
+    echo '<script>(function(){const c=document.getElementById("chkMuestra"); if(!c) return; c.addEventListener("change",()=>{const fd=new FormData(); fd.append("resultado_id","' . $resultadoId . '"); fd.append("es_muestra", c.checked?"1":"0"); fetch("actualizar_muestra.php",{method:"POST",body:fd}).then(r=>r.json()).then(j=>{if(!j.ok){alert("No se pudo actualizar: "+(j.error||""));}}).catch(()=>alert("Error de red al actualizar muestra"));});})();</script>';
     exit;
 }
 ?>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h6 class="m-0">Justificaciones</h6>
+  <div class="form-check form-switch">
+    <input class="form-check-input" type="checkbox" id="chkMuestra" <?= $esMuestra ? 'checked' : '' ?>>
+    <label class="form-check-label" for="chkMuestra">Tomado como muestra</label>
+  </div>
+</div>
 
 <div class="list-group">
 <?php foreach ($rows as $i => $r): ?>
@@ -63,3 +93,19 @@ if (!$rows) {
   </div>
 <?php endforeach; ?>
 </div>
+
+<script>
+(function(){
+  const c = document.getElementById('chkMuestra');
+  if (!c) return;
+  c.addEventListener('change', () => {
+    const fd = new FormData();
+    fd.append('resultado_id', '<?= $resultadoId ?>');
+    fd.append('es_muestra', c.checked ? '1' : '0');
+    fetch('actualizar_muestra.php', { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(j => { if(!j.ok){ alert('No se pudo actualizar: ' + (j.error||'')); } })
+      .catch(() => alert('Error de red al actualizar muestra'));
+  });
+})();
+</script>

@@ -25,6 +25,8 @@ $genero       = $_GET['genero'] ?? '';
 $edad         = isset($_GET['edad']) && is_numeric($_GET['edad']) ? (int)$_GET['edad'] : '';
 $paralelo     = $_GET['paralelo'] ?? '';
 $integridad   = $_GET['integridad'] ?? '';
+// Nuevo filtro: mostrar solo exámenes marcados como muestra
+$filtro_muestra = isset($_GET['muestra']) ? $_GET['muestra'] : '';
 
 // 4. CONSULTA SQL
 $sql = "SELECT 
@@ -63,6 +65,12 @@ if ($paralelo) {
     $sql .= " AND r.paralelo = :paralelo";
     $params['paralelo'] = $paralelo;
 }
+// Aplicar filtro de muestra si corresponde: 'si' -> TRUE, 'no' -> FALSE
+if ($filtro_muestra === 'si') {
+    $sql .= " AND COALESCE(r.es_muestra, FALSE) = TRUE";
+} elseif ($filtro_muestra === 'no') {
+    $sql .= " AND COALESCE(r.es_muestra, FALSE) = FALSE";
+}
 
 $sql .= " ORDER BY r.fecha_realizacion DESC";
 
@@ -92,7 +100,8 @@ foreach ($resultados_raw as $row) {
 
     // Cálculo Nota / 100
     $puntos_obtenidos = (float)$row['puntos_obtenidos'];
-    $nota_calculada = ($puntos_obtenidos / $TOTAL_PUNTOS_POSIBLES) * 100;
+    $tot_posibles_row = isset($row['puntos_totales_quiz']) ? (float)$row['puntos_totales_quiz'] : $TOTAL_PUNTOS_POSIBLES;
+    $nota_calculada = $tot_posibles_row > 0 ? ($puntos_obtenidos / $tot_posibles_row) * 100 : 0;
     $nota_final_100 = round($nota_calculada, 2);
     if ($nota_final_100 > 100) $nota_final_100 = 100;
 
@@ -608,6 +617,14 @@ function getScoreBadge($nota) {
                     <option value="H" <?= $paralelo == 'H' ? 'selected' : '' ?>>H</option>
                 </select>
             </div>
+            <div class="col-md-2">
+                <label class="form-label small fw-bold text-muted">Muestra</label>
+                <select name="muestra" class="form-select form-select-sm">
+                    <option value="">Todos</option>
+                    <option value="si" <?= $filtro_muestra === 'si' ? 'selected' : '' ?>>Solo muestra</option>
+                    <option value="no" <?= $filtro_muestra === 'no' ? 'selected' : '' ?>>No muestra</option>
+                </select>
+            </div>
             <div class="col-md-3 d-flex align-items-end gap-2">
                 <button type="submit" class="btn btn-primary btn-sm flex-grow-1">Filtrar</button>
                 <a href="?" class="btn btn-light btn-sm">Limpiar</a>
@@ -653,6 +670,7 @@ function getScoreBadge($nota) {
                                 <th>Demografía</th>
                                 <th>Examen</th>
                                 <th>Puntos Reales</th>
+                                <th class="text-center">Muestra</th>
                                 <th class="text-center">Nota / 100</th>
                                 <th class="text-end pe-4">Acciones</th>
                             </tr>
@@ -684,17 +702,28 @@ function getScoreBadge($nota) {
                                     <td>
                                         <div class="fw-bold text-secondary small"><?= htmlspecialchars($row['quiz_titulo']) ?></div>
                                         <div class="small text-muted"><?= date('d/m/Y', strtotime($row['fecha_realizacion'])) ?></div>
+                                        <?php if (!empty($row['es_muestra'])): ?>
+                                            <span class="badge rounded-pill bg-secondary mt-1 badge-muestra">Muestra</span>
+                                        <?php endif; ?>
                                         <?php if ($row['nivel_integridad'] !== 'limpio'): ?>
                                             <div class="text-danger small mt-1"><i class="fas fa-exclamation-triangle"></i> <?= $row['intentos_tab_switch'] ?> salidas</div>
                                         <?php endif; ?>
                                     </td>
-                                    <td class="text-muted"><?= $row['puntos_obtenidos'] ?> / 250</td>
+                                    <td class="text-muted" id="pts-<?= (int)$row['id'] ?>"><?= $row['puntos_obtenidos'] ?> / <?= isset($row['puntos_totales_quiz']) ? (int)$row['puntos_totales_quiz'] : 250 ?></td>
+                                    <td class="text-center">
+                                        <div class="form-check form-switch d-inline-block">
+                                            <input class="form-check-input chk-muestra" type="checkbox" data-resultado-id="<?= (int)$row['id'] ?>" <?= !empty($row['es_muestra']) ? 'checked' : '' ?>>
+                                        </div>
+                                    </td>
                                     <td class="text-center">
                                         <span class="<?= getScoreBadge($row['nota_sobre_100']) ?> fs-6"><?= $row['nota_sobre_100'] ?></span>
                                     </td>
                                     <td class="text-end pe-4">
                                         <button class="btn btn-sm btn-outline-primary" onclick="verJustificaciones(<?= $row['id'] ?>)">
                                             <i class="fas fa-comment-alt me-1"></i> Justificaciones
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary ms-2" onclick="verCalificacion(<?= $row['id'] ?>)">
+                                            <i class="fas fa-check-double me-1"></i> Calificar
                                         </button>
                                     </td>
                                 </tr>
@@ -789,6 +818,23 @@ function getScoreBadge($nota) {
     </div>
 </div>
 
+        <div class="modal fade" id="calificarModal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="fas fa-check-double me-2 text-primary"></i>Calificar Examen</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body" id="calificarBody">
+                        <div class="text-center py-4 text-muted">Cargando...</div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                    </div>
+                </div>
+            </div>
+            </div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
@@ -810,6 +856,110 @@ function verJustificaciones(resultadoId) {
             bodyEl.innerHTML = '<div class="alert alert-danger">Error al cargar datos.</div>';
         });
 }
+
+function verCalificacion(resultadoId) {
+    const modalEl = document.getElementById('calificarModal');
+    const bodyEl = document.getElementById('calificarBody');
+    bodyEl.innerHTML = '<div class="text-center py-4 text-muted"><div class="spinner-border text-primary"></div><p>Cargando preguntas...</p></div>';
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+
+    fetch('get_calificar_respuestas.php?resultado_id=' + resultadoId)
+        .then(res => res.text())
+        .then(html => { bodyEl.innerHTML = html; })
+        .catch(() => { bodyEl.innerHTML = '<div class="alert alert-danger">Error al cargar los datos de calificación.</div>'; });
+}
+
+function guardarCalificacion(resultadoId) {
+    const bodyEl = document.getElementById('calificarBody');
+    const form = bodyEl.querySelector('#formCalificacion');
+    if (!form) return;
+    // UI: deshabilitar botón y mostrar spinner
+    const btn = bodyEl.querySelector('button.btn.btn-primary.btn-sm');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Guardando...';
+    }
+    const fd = new FormData(form);
+    fetch('guardar_calificacion.php', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(j => {
+            if (!j.ok) throw new Error(j.error || 'Error al guardar');
+            // Actualizar puntaje en la tabla si existe el elemento
+            const ptsEl = document.getElementById('pts-' + resultadoId);
+            if (ptsEl && j.puntos_obtenidos !== undefined && j.puntos_totales !== undefined) {
+                ptsEl.textContent = j.puntos_obtenidos + ' / ' + j.puntos_totales;
+            }
+            // Notificación visible (toast)
+            if (window.showToast) {
+                window.showToast('Calificación guardada exitosamente', 'success');
+            } else {
+                const ok = document.createElement('div');
+                ok.className = 'alert alert-success';
+                ok.textContent = 'Calificación guardada exitosamente';
+                bodyEl.prepend(ok);
+                setTimeout(()=>{ ok.remove(); }, 3000);
+            }
+        })
+        .catch(err => {
+            if (window.showToast) {
+                window.showToast('No se pudo guardar la calificación: ' + err.message, 'danger');
+            } else {
+                const er = document.createElement('div');
+                er.className = 'alert alert-danger';
+                er.textContent = 'No se pudo guardar la calificación: ' + err.message;
+                bodyEl.prepend(er);
+                setTimeout(()=>{ er.remove(); }, 5000);
+            }
+        })
+        .finally(() => {
+            // Restaurar botón
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        });
+}
+
+// Toggle inline "Muestra" switch
+document.addEventListener('change', function(e) {
+        if (!e.target.classList.contains('chk-muestra')) return;
+        const cb = e.target;
+        const rid = cb.getAttribute('data-resultado-id');
+        if (!rid) return;
+        const desired = cb.checked;
+        const fd = new FormData();
+        fd.append('resultado_id', rid);
+        fd.append('es_muestra', desired ? '1' : '0');
+        fetch('actualizar_muestra.php', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(j => {
+                if (!j.ok) throw new Error(j.error || 'Error al actualizar');
+                // Update badge in the Examen cell
+                const row = cb.closest('tr');
+                if (!row) return;
+                // Examen está en la 3ra celda (1: Estudiante, 2: Demografía, 3: Examen)
+                const examCell = row.querySelector('td:nth-child(3)');
+                if (!examCell) return;
+                let badge = examCell.querySelector('.badge-muestra');
+                if (desired) {
+                        if (!badge) {
+                                badge = document.createElement('span');
+                                badge.className = 'badge rounded-pill bg-secondary mt-1 badge-muestra';
+                                badge.textContent = 'Muestra';
+                                examCell.appendChild(badge);
+                        }
+                } else if (badge) {
+                        badge.remove();
+                }
+            })
+            .catch(err => {
+                // revert state and notify
+                cb.checked = !desired;
+                alert('No se pudo actualizar la marca de muestra: ' + err.message);
+            });
+});
 
 // ============================================
 // GRÁFICOS CON CHART.JS
@@ -988,6 +1138,42 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 <?php endif; ?>
+</script>
+<style>
+/* Toast container positioning */
+#globalToastContainer { position: fixed; top: 16px; right: 16px; z-index: 1080; }
+</style>
+<div id="globalToastContainer" aria-live="polite" aria-atomic="true"></div>
+<script>
+// Utilidad: mostrar toast Bootstrap (o fallback) en la esquina superior derecha
+window.showToast = function(message, type = 'success') {
+        const container = document.getElementById('globalToastContainer');
+        if (!container) return alert(message);
+        const color = type === 'danger' ? 'bg-danger text-white' : type === 'warning' ? 'bg-warning text-dark' : 'bg-success text-white';
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = `
+            <div class="toast align-items-center ${color}" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="3000">
+                <div class="d-flex">
+                    <div class="toast-body">${message}</div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            </div>`;
+        const toastEl = wrapper.firstElementChild;
+        container.appendChild(toastEl);
+        try {
+                const toast = new bootstrap.Toast(toastEl);
+                toast.show();
+                toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
+        } catch (e) {
+                // Fallback si Bootstrap.Toast no está disponible
+                const alt = document.createElement('div');
+                alt.className = 'alert ' + (type === 'danger' ? 'alert-danger' : type === 'warning' ? 'alert-warning' : 'alert-success');
+                alt.textContent = message;
+                container.appendChild(alt);
+                setTimeout(() => alt.remove(), 3000);
+                toastEl.remove();
+        }
+};
 </script>
 
 </body>
