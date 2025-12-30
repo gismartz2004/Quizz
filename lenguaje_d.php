@@ -100,7 +100,10 @@ foreach ($resultados_raw as $row) {
 
     // Cálculo Nota / 100
     $puntos_obtenidos = (float)$row['puntos_obtenidos'];
-    $tot_posibles_row = isset($row['puntos_totales_quiz']) ? (float)$row['puntos_totales_quiz'] : $TOTAL_PUNTOS_POSIBLES;
+    $puntos_obtenidos = (float)$row['puntos_obtenidos'];
+    // FORZAR A 250 PUNTOS (25 preguntas x 10 pts) según requerimiento
+    $tot_posibles_row = 250; 
+    //$tot_posibles_row = isset($row['puntos_totales_quiz']) ? (float)$row['puntos_totales_quiz'] : $TOTAL_PUNTOS_POSIBLES;
     $nota_calculada = $tot_posibles_row > 0 ? ($puntos_obtenidos / $tot_posibles_row) * 100 : 0;
     $nota_final_100 = round($nota_calculada, 2);
     if ($nota_final_100 > 100) $nota_final_100 = 100;
@@ -180,6 +183,17 @@ function getScoreBadge($nota) {
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Google Analytics (Pendiente de ID de medición G-XXXXXXXXXX)
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-XXXXXXXXXX');
+    </script>
+    -->
+    
     <style>
         :root {
             --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -570,9 +584,14 @@ function getScoreBadge($nota) {
         <div class="container">
             <div class="d-flex justify-content-between align-items-center">
                 <h4><i class="fas fa-chart-line me-3"></i>Reporte Académico</h4>
-                <a href="profesor.php" class="btn">
-                    <i class="fas fa-arrow-left me-2"></i>Volver
-                </a>
+                <div>
+                    <a href="analytics.php" class="btn btn-primary me-2">
+                        <i class="fas fa-chart-pie me-2"></i>Google Analytics
+                    </a>
+                    <a href="profesor.php" class="btn">
+                        <i class="fas fa-arrow-left me-2"></i>Volver
+                    </a>
+                </div>
             </div>
         </div>
     </div>
@@ -709,7 +728,7 @@ function getScoreBadge($nota) {
                                             <div class="text-danger small mt-1"><i class="fas fa-exclamation-triangle"></i> <?= $row['intentos_tab_switch'] ?> salidas</div>
                                         <?php endif; ?>
                                     </td>
-                                    <td class="text-muted" id="pts-<?= (int)$row['id'] ?>"><?= $row['puntos_obtenidos'] ?> / <?= isset($row['puntos_totales_quiz']) ? (int)$row['puntos_totales_quiz'] : 250 ?></td>
+                                    <td class="text-muted" id="pts-<?= (int)$row['id'] ?>"><?= $row['puntos_obtenidos'] ?> / 250</td>
                                     <td class="text-center">
                                         <div class="form-check form-switch d-inline-block">
                                             <input class="form-check-input chk-muestra" type="checkbox" data-resultado-id="<?= (int)$row['id'] ?>" <?= !empty($row['es_muestra']) ? 'checked' : '' ?>>

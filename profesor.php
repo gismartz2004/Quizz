@@ -462,6 +462,11 @@ try {
             <h5>Crear Examen</h5>
             <p>Crea un nuevo quiz con preguntas</p>
         </a>
+        <a href="analytics.php" class="nav-card success">
+            <div class="icon"><i class="fas fa-chart-line"></i></div>
+            <h5>Google Analytics</h5>
+            <p>Dashboard avanzado de métricas</p>
+        </a>
         <a href="lenguaje_d.php" class="nav-card success">
             <div class="icon"><i class="fas fa-chart-bar"></i></div>
             <h5>Reportes</h5>
