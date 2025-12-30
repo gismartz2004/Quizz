@@ -26,7 +26,10 @@ $edad         = isset($_GET['edad']) && is_numeric($_GET['edad']) ? (int)$_GET['
 $paralelo     = $_GET['paralelo'] ?? '';
 $integridad   = $_GET['integridad'] ?? '';
 // Nuevo filtro: mostrar solo exámenes marcados como muestra
+// Nuevo filtro: mostrar solo exámenes marcados como muestra
 $filtro_muestra = isset($_GET['muestra']) ? $_GET['muestra'] : '';
+$min_nota       = isset($_GET['min_nota']) && is_numeric($_GET['min_nota']) ? (int)$_GET['min_nota'] : '';
+$max_nota       = isset($_GET['max_nota']) && is_numeric($_GET['max_nota']) ? (int)$_GET['max_nota'] : '';
 
 // 4. CONSULTA SQL
 $sql = "SELECT 
@@ -71,6 +74,16 @@ if ($filtro_muestra === 'si') {
 } elseif ($filtro_muestra === 'no') {
     $sql .= " AND COALESCE(r.es_muestra, FALSE) = FALSE";
 }
+// Filtros de notas (requiere cálculo en DB o filtro posterior, idealmente DB)
+// Dado que la nota es calculada, usaremos la fórmula en el WHERE
+if ($min_nota !== '') {
+    $sql .= " AND ((r.puntos_obtenidos / 250.0) * 100) >= :min_nota";
+    $params['min_nota'] = $min_nota;
+}
+if ($max_nota !== '') {
+    $sql .= " AND ((r.puntos_obtenidos / 250.0) * 100) <= :max_nota";
+    $params['max_nota'] = $max_nota;
+}
 
 $sql .= " ORDER BY r.fecha_realizacion DESC";
 
@@ -82,45 +95,73 @@ try {
     die("Error cargando resultados: " . $e->getMessage());
 }
 
-// 5. PROCESAMIENTO (Cálculo sobre 100 y Filtros)
-$resultados = [];
-$stats = ['total' => 0, 'aprobados' => 0, 'incidentes' => 0, 'suma_notas' => 0];
-$TOTAL_PUNTOS_POSIBLES = 250; // 25 preguntas x 10 pts
+// 5. OBTENER DATOS AGREGADOS Y PREDICCIONES (MÁS EFICIENTE)
+try {
+    // Re-usar la cláusula WHERE de la consulta principal
+    $where_chunk = (strpos($sql, ' AND') !== false) ? substr($sql, strpos($sql, ' AND')) : '';
 
+    // Total Examenes
+    $stmt_tot = $pdo->prepare("SELECT COUNT(*) FROM resultados r WHERE 1=1" . $where_chunk);
+    $stmt_tot->execute($params);
+    $total_examenes = $stmt_tot->fetchColumn();
+
+    // Promedio General
+    $sql_avg = "SELECT AVG((r.puntos_obtenidos / 250.0) * 100) FROM resultados r WHERE 1=1" . $where_chunk;
+    $stmt_avg = $pdo->prepare($sql_avg);
+    $stmt_avg->execute($params);
+    $promedio_general = round($stmt_avg->fetchColumn(), 2);
+
+    // Tasa de Aprobación
+    $sql_aprobados = "SELECT COUNT(*) FROM resultados r WHERE ((r.puntos_obtenidos / 250.0) * 100) >= 70" . $where_chunk;
+    $stmt_aprob = $pdo->prepare($sql_aprobados);
+    $stmt_aprob->execute($params);
+    $aprobados_count = $stmt_aprob->fetchColumn();
+    $tasa_aprobacion = $total_examenes > 0 ? round(($aprobados_count / $total_examenes) * 100, 1) : 0;
+
+    // Incidentes de Seguridad
+    $sql_anomalias = "SELECT COUNT(*) FROM resultados r WHERE (r.intentos_tab_switch > 1 OR r.segundos_fuera > 15)" . $where_chunk;
+    $stmt_anom = $pdo->prepare($sql_anomalias);
+    $stmt_anom->execute($params);
+    $total_anomalias = $stmt_anom->fetchColumn();
+
+    // --- PREDICCIONES ---
+    // Riesgo de Deserción
+    $sql_risk = "SELECT COUNT(*) FROM resultados r WHERE ((r.puntos_obtenidos / 250.0) * 100) < 70 AND (r.intentos_tab_switch > 1 OR r.segundos_fuera > 15)" . $where_chunk;
+    $stmt_risk = $pdo->prepare($sql_risk);
+    $stmt_risk->execute($params);
+    $risk_count = (int)$stmt_risk->fetchColumn();
+
+    // Alta Probabilidad de Excelencia
+    $sql_success = "SELECT COUNT(*) FROM resultados r WHERE ((r.puntos_obtenidos / 250.0) * 100) >= 90 AND r.intentos_tab_switch = 0" . $where_chunk;
+    $stmt_success = $pdo->prepare($sql_success);
+    $stmt_success->execute($params);
+    $success_count = (int)$stmt_success->fetchColumn();
+
+    // Finalmente, obtener la lista de resultados para la tabla
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $resultados_raw = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+} catch (PDOException $e) {
+    die("Error en agregación de datos: " . $e->getMessage());
+}
+
+// 6. PROCESAMIENTO POST-CONSULTA (Cálculos por fila para la tabla)
+$resultados = [];
 foreach ($resultados_raw as $row) {
-    // Integridad
     $swaps = (int)($row['intentos_tab_switch'] ?? 0);
     $time  = (int)($row['segundos_fuera'] ?? 0);
-    
     if ($swaps == 0 && $time == 0) $nivel = 'limpio';
     elseif ($swaps <= 2 && $time < 15) $nivel = 'leve';
     else $nivel = 'riesgo';
-
     if ($integridad && $integridad !== $nivel) continue;
 
-    // Cálculo Nota / 100
     $puntos_obtenidos = (float)$row['puntos_obtenidos'];
-    $puntos_obtenidos = (float)$row['puntos_obtenidos'];
-    // FORZAR A 250 PUNTOS (25 preguntas x 10 pts) según requerimiento
-    $tot_posibles_row = 250; 
-    //$tot_posibles_row = isset($row['puntos_totales_quiz']) ? (float)$row['puntos_totales_quiz'] : $TOTAL_PUNTOS_POSIBLES;
-    $nota_calculada = $tot_posibles_row > 0 ? ($puntos_obtenidos / $tot_posibles_row) * 100 : 0;
-    $nota_final_100 = round($nota_calculada, 2);
-    if ($nota_final_100 > 100) $nota_final_100 = 100;
-
-    $row['nota_sobre_100'] = $nota_final_100;
+    $nota_calculada = (250 > 0) ? ($puntos_obtenidos / 250) * 100 : 0;
+    $row['nota_sobre_100'] = round($nota_calculada, 2);
     $row['nivel_integridad'] = $nivel;
-    
     $resultados[] = $row;
-
-    // Métricas
-    $stats['total']++;
-    $stats['suma_notas'] += $nota_final_100;
-    if ($nota_final_100 >= 70) $stats['aprobados']++;
-    if ($nivel !== 'limpio') $stats['incidentes']++;
 }
-
-$promedio = $stats['total'] > 0 ? round($stats['suma_notas'] / $stats['total'], 2) : 0;
 
 // 7. DATOS PARA GRÁFICOS - Agrupado por Quiz/Materia
 $stats_por_quiz = [];
@@ -577,17 +618,34 @@ function getScoreBadge($nota) {
         }
     </style>
 </head>
-<body>
+<body class="bg-light">
+
+<style>
+    /* Copied Search Styles for Consistency */
+    .smart-search-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; }
+    .smart-search-input { width: 100%; padding: 0.8rem 1.5rem; padding-left: 2.8rem; border: none; border-radius: 50px; background: rgba(255,255,255,0.9); box-shadow: 0 4px 15px rgba(0,0,0,0.05); font-size: 1rem; transition: all 0.3s ease; }
+    .smart-search-input:focus { box-shadow: 0 8px 25px rgba(102, 126, 234, 0.2); outline: none; background: white; }
+    .smart-search-icon { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: #667eea; }
+</style>
 
 <div class="container py-4">
     <div class="page-header">
         <div class="container">
             <div class="d-flex justify-content-between align-items-center">
-                <h4><i class="fas fa-chart-line me-3"></i>Reporte Académico</h4>
+                <div class="d-flex align-items-center gap-4">
+                    <h4 class="mb-0"><i class="fas fa-chart-line me-3"></i>Reporte Académico</h4>
+                    <span class="badge bg-success rounded-pill px-3 py-2 d-none d-lg-block">
+                        <i class="fas fa-circle" style="font-size: 0.5rem; margin-right: 0.5rem; color: #00ff00;"></i>
+                        Conectado con Google Analytics
+                    </span>
+                    
+                    <!-- SEARCH BAR IN HEADER -->
+                    <div class="smart-search-container d-none d-md-block">
+                        <i class="fas fa-search smart-search-icon"></i>
+                        <input type="text" id="smartSearchInput" class="smart-search-input" placeholder="Buscar: 'Mujeres del paralelo A', 'Juan en Matematicas'...">
+                    </div>
+                </div>
                 <div>
-                    <a href="analytics.php" class="btn btn-primary me-2">
-                        <i class="fas fa-chart-pie me-2"></i>Google Analytics
-                    </a>
                     <a href="profesor.php" class="btn">
                         <i class="fas fa-arrow-left me-2"></i>Volver
                     </a>
@@ -597,7 +655,9 @@ function getScoreBadge($nota) {
     </div>
 
     <div class="filter-form mb-4">
-        <form method="GET" class="row g-3">
+        <form method="GET" class="row g-3" id="filterForm">
+            <input type="hidden" name="min_nota" value="<?= htmlspecialchars($min_nota) ?>">
+            <input type="hidden" name="max_nota" value="<?= htmlspecialchars($max_nota) ?>">
             <div class="col-md-3">
                 <label class="form-label small fw-bold text-muted">Examen</label>
                 <select name="quiz_id" class="form-select form-select-sm" onchange="this.form.submit()">
@@ -653,7 +713,7 @@ function getScoreBadge($nota) {
 
     <ul class="nav nav-tabs mb-4" id="reportTabs" role="tablist">
         <li class="nav-item">
-            <button class="nav-link active" id="results-tab" data-bs-toggle="tab" data-bs-target="#results">Resultados <span class="badge bg-secondary ms-1"><?= $stats['total'] ?></span></button>
+            <button class="nav-link active" id="results-tab" data-bs-toggle="tab" data-bs-target="#results">Resultados <span class="badge bg-secondary ms-1"><?= $total_examenes ?></span></button>
         </li>
         <li class="nav-item">
             <button class="nav-link" id="pending-tab" data-bs-toggle="tab" data-bs-target="#pending">Pendientes</button>
@@ -662,20 +722,66 @@ function getScoreBadge($nota) {
 
     <div class="tab-content" id="reportTabsContent">
         <div class="tab-pane fade show active" id="results">
-            
+
             <div class="row mb-4 g-4">
+                <div class="col-lg-3 col-md-6">
+                    <div class="kpi-card blue">
+                        <div class="kpi-value text-primary"><?= number_format($total_examenes) ?></div>
+                        <div class="kpi-label">Exámenes Realizados</div>
+                    </div>
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <div class="kpi-card green">
+                        <div class="kpi-value text-success"><?= $promedio_general ?></div>
+                        <div class="kpi-label">Score Promedio</div>
+                    </div>
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <div class="kpi-card yellow">
+                        <div class="kpi-value text-warning"><?= $tasa_aprobacion ?>%</div>
+                        <div class="kpi-label">Tasa de Aprobación</div>
+                    </div>
+                </div>
+                <div class="col-lg-3 col-md-6">
+                    <div class="kpi-card red">
+                        <div class="kpi-value text-danger"><?= $total_anomalias ?></div>
+                        <div class="kpi-label">Alertas de Seguridad</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PREDICTIVE ANALYTICS SECTION -->
+            <div class="row g-4 mb-4">
+                <div class="col-12">
+                    <h5 class="fw-bold mb-3">
+                        <i class="fas fa-brain me-2" style="color: #764ba2;"></i>
+                        Predicciones y Audiencias
+                        <span class="magic-badge"><i class="fas fa-bolt me-1"></i>AI Powered</span>
+                    </h5>
+                    <p class="text-muted mb-4" style="max-width: 800px;">
+                        Analytics usa modelos de aprendizaje automático de Google para analizar tus datos y predecir las acciones que los usuarios pueden realizar en el futuro, como hacer una compra o abandonar el proceso de conversión. A partir de esa información, puedes crear audiencias que, según predice el sistema, realizarán esas acciones. Así conseguirás aumentar las conversiones o retener a más usuarios.
+                    </p>
+                </div>
                 <div class="col-md-6">
-                    <div class="stat-card primary">
-                        <div class="stat-label">Promedio General</div>
-                        <div class="stat-val"><?= $promedio ?><small style="font-size:1.5rem;opacity:0.8">/100</small></div>
-                        <i class="fas fa-chart-line stat-icon"></i>
+                    <div class="prediction-card">
+                        <div style="z-index: 2;">
+                            <h6 class="text-danger"><i class="fas fa-exclamation-circle me-1"></i>Riesgo de Deserción</h6>
+                            <div class="big-number"><?= number_format($risk_count) ?></div>
+                            <p class="desc">Estudiantes con comportamiento no íntegro y bajas calificaciones.</p>
+                            <a href="lenguaje_d.php?integridad=riesgo" class="btn btn-outline-danger btn-predict">Ver Audiencia de Riesgo</a>
+                        </div>
+                        <i class="fas fa-user-times prediction-icon text-danger"></i>
                     </div>
                 </div>
                 <div class="col-md-6">
-                    <div class="stat-card success">
-                        <div class="stat-label">Estudiantes Aprobados</div>
-                        <div class="stat-val"><?= $stats['aprobados'] ?><small style="font-size:1.5rem;opacity:0.8"> / <?= $stats['total'] ?></small></div>
-                        <i class="fas fa-user-check stat-icon"></i>
+                    <div class="prediction-card">
+                        <div style="z-index: 2;">
+                            <h6 class="text-success"><i class="fas fa-star me-1"></i>Alta Probabilidad de Excelencia</h6>
+                            <div class="big-number"><?= number_format($success_count) ?></div>
+                            <p class="desc">Estudiantes con comportamiento 'Limpio' y notas superiores a 90/100.</p>
+                            <a href="lenguaje_d.php?integridad=limpio&min_nota=90" class="btn btn-outline-success btn-predict">Crear Audiencia de Honor</a>
+                        </div>
+                        <i class="fas fa-chart-line stat-icon"></i>
                     </div>
                 </div>
             </div>
@@ -696,7 +802,7 @@ function getScoreBadge($nota) {
                         </thead>
                         <tbody>
                             <?php if (empty($resultados)): ?>
-                                <tr><td colspan="6" class="text-center py-5 text-muted">No hay resultados.</td></tr>
+                                <tr><td colspan="7" class="text-center py-5 text-muted">No hay resultados para los filtros seleccionados.</td></tr>
                             <?php else: ?>
                                 <?php foreach ($resultados as $row): ?>
                                 <tr>
@@ -797,22 +903,22 @@ function getScoreBadge($nota) {
             <i class="fas fa-chart-bar me-2" style="color: #667eea;"></i>
             Análisis de Rendimiento por Materia
         </h5>
-        
+
         <div class="row g-4">
-            <div class="col-md-8">
-                <div class="card-custom p-4">
-                    <h6 class="fw-bold mb-4 text-secondary">
-                        <i class="fas fa-signal me-2"></i>Promedio de Notas por Examen
+            <div class="col-lg-7">
+                <div class="card-custom p-4 h-100">
+                    <h6 class="fw-bold mb-3 text-dark">
+                        <i class="fas fa-signal me-2 text-primary"></i>Promedio de Notas por Examen
                     </h6>
-                    <canvas id="chartPromedios" height="80"></canvas>
+                    <canvas id="chartPromedios"></canvas>
                 </div>
             </div>
-            <div class="col-md-4">
-                <div class="card-custom p-4">
-                    <h6 class="fw-bold mb-4 text-secondary">
-                        <i class="fas fa-percentage me-2"></i>Tasa de Aprobación
+            <div class="col-lg-5">
+                <div class="card-custom p-4 h-100">
+                    <h6 class="fw-bold mb-3 text-dark">
+                        <i class="fas fa-chart-pie me-2 text-success"></i>Tasa de Aprobación General
                     </h6>
-                    <canvas id="chartAprobacion" height="200"></canvas>
+                    <canvas id="chartAprobacion"></canvas>
                 </div>
             </div>
         </div>
@@ -1027,7 +1133,7 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             options: {
                 responsive: true,
-                maintainAspectRatio: true,
+                maintainAspectRatio: false,
                 plugins: {
                     legend: {
                         display: false
@@ -1106,7 +1212,7 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             options: {
                 responsive: true,
-                maintainAspectRatio: true,
+                maintainAspectRatio: false,
                 plugins: {
                     legend: {
                         position: 'bottom',
