@@ -85,6 +85,9 @@ if ($max_nota !== '') {
     $params['max_nota'] = $max_nota;
 }
 
+// FIX: Capturar los filtros (WHERE) antes de agregar el ORDER BY, para no romper las queries de COUNT/AVG
+$where_chunk = (strpos($sql, ' AND') !== false) ? substr($sql, strpos($sql, ' AND')) : '';
+
 $sql .= " ORDER BY r.fecha_realizacion DESC";
 
 try {
@@ -97,8 +100,7 @@ try {
 
 // 5. OBTENER DATOS AGREGADOS Y PREDICCIONES (MÁS EFICIENTE)
 try {
-    // Re-usar la cláusula WHERE de la consulta principal
-    $where_chunk = (strpos($sql, ' AND') !== false) ? substr($sql, strpos($sql, ' AND')) : '';
+    // Re-usar la cláusula WHERE de la consulta principal (ya capturada en $where_chunk antes del ORDER BY)
 
     // Total Examenes
     $stmt_tot = $pdo->prepare("SELECT COUNT(*) FROM resultados r WHERE 1=1" . $where_chunk);

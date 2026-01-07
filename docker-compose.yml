@@ -11,6 +11,6 @@ services:
     environment:
       - PORT=8080
     volumes:
-      # Montaje en vivo para desarrollo; comenta esta línea para producción
+      # Montaje en vivo para desarrollo en produccion;
       - ./:/var/www/html
     restart: unless-stopped
