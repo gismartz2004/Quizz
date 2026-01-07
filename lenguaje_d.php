@@ -658,6 +658,7 @@ function getScoreBadge($nota) {
 
     <div class="filter-form mb-4">
         <form method="GET" class="row g-3" id="filterForm">
+            <input type="hidden" name="q" id="hiddenSearchQuery" value="<?= htmlspecialchars($_GET['q'] ?? '') ?>">
             <input type="hidden" name="min_nota" value="<?= htmlspecialchars($min_nota) ?>">
             <input type="hidden" name="max_nota" value="<?= htmlspecialchars($max_nota) ?>">
             <div class="col-md-3">
@@ -1271,18 +1272,25 @@ document.addEventListener('DOMContentLoaded', function() {
 #globalToastContainer { position: fixed; top: 16px; right: 16px; z-index: 1080; }
 </style>
 <div id="globalToastContainer" aria-live="polite" aria-atomic="true"></div>
-<script>
-// Utilidad: mostrar toast Bootstrap (o fallback) en la esquina superior derecha
-window.showToast = function(message, type = 'success') {
+
+    <!-- Bootstrap JS (Required for Toasts) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+    // Utilidad: mostrar toast Bootstrap (o fallback) en la esquina superior derecha
+    window.showToast = function(message, type = 'success') {
         const container = document.getElementById('globalToastContainer');
         if (!container) return alert(message);
+        
         const color = type === 'danger' ? 'bg-danger text-white' : type === 'warning' ? 'bg-warning text-dark' : 'bg-success text-white';
+        const closeBtnClass = type === 'warning' ? 'btn-close' : 'btn-close btn-close-white';
+
         const wrapper = document.createElement('div');
         wrapper.innerHTML = `
             <div class="toast align-items-center ${color}" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="3000">
                 <div class="d-flex">
                     <div class="toast-body">${message}</div>
-                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                    <button type="button" class="${closeBtnClass} me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
                 </div>
             </div>`;
         const toastEl = wrapper.firstElementChild;
@@ -1300,7 +1308,116 @@ window.showToast = function(message, type = 'success') {
                 setTimeout(() => alt.remove(), 3000);
                 toastEl.remove();
         }
-};
+    };
+
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log("Smart Search: Script loaded.");
+        
+        const searchInput = document.getElementById('smartSearchInput');
+        const form = document.getElementById('filterForm'); // CORRECTED: targets proper form in lenguaje_d.php
+
+        if (!searchInput || !form) {
+            console.error("Smart Search: Input o Form no encontrados.");
+            return;
+        }
+
+        const processAndSubmitQuery = () => {
+            console.log("Smart Search: Procesando...");
+            const query = searchInput.value.toLowerCase();
+
+            try {
+                // 1. Detectar GÉNERO
+                const selGenero = form.querySelector('select[name="genero"]');
+                if (selGenero) {
+                    if (query.match(/mujer|femenino|chicas|niñas/)) selGenero.value = 'Femenino';
+                    else if (query.match(/hombre|masculino|chicos|niños/)) selGenero.value = 'Masculino';
+                }
+
+                // 2. Detectar PARALELO
+                const selParalelo = form.querySelector('select[name="paralelo"]');
+                if (selParalelo) {
+                    const paraleloMatch = query.match(/\b([a-h])\b/i) || query.match(/paralelo\s*([a-h])/i);
+                    if (paraleloMatch) selParalelo.value = paraleloMatch[1].toUpperCase();
+                }
+
+                // 3. Detectar EDAD
+                const inpEdad = form.querySelector('input[name="edad"]');
+                if (inpEdad) {
+                    const edadMatch = query.match(/(\d+)\s*(a?os|edad)/);
+                    if (edadMatch) inpEdad.value = edadMatch[1];
+                }
+
+                // 4. Detectar MES
+                const selMes = form.querySelector('select[name="mes"]');
+                if (selMes) {
+                    const meses = {
+                        'enero': '01', 'febrero': '02', 'marzo': '03', 'abril': '04', 'mayo': '05', 'junio': '06',
+                        'julio': '07', 'agosto': '08', 'septiembre': '09', 'octubre': '10', 'noviembre': '11', 'diciembre': '12'
+                    };
+                    for (const [nombre, val] of Object.entries(meses)) {
+                        if (query.includes(nombre)) {
+                            selMes.value = val;
+                            break;
+                        }
+                    }
+                }
+
+                // 5. Detectar EXAMEN
+                const selQuiz = form.querySelector('select[name="quiz_id"]');
+                if (selQuiz) {
+                    const options = selQuiz.options;
+                    for (let i = 1; i < options.length; i++) { 
+                        if (query.includes(options[i].text.toLowerCase())) {
+                            selQuiz.value = options[i].value;
+                            break;
+                        }
+                    }
+                }
+
+                // 6. Detectar RANGO DE NOTAS
+                const inpMax = form.querySelector('input[name="max_nota"]');
+                if (inpMax) {
+                    const maxMatch = query.match(/(?:menor|bajo|menos)\s*(?:a|que|de)?\s*(\d+)/);
+                    if (maxMatch) inpMax.value = maxMatch[1];
+                }
+                
+                const inpMin = form.querySelector('input[name="min_nota"]');
+                if (inpMin) {
+                    const minMatch = query.match(/(?:mayor|sobre|mas|arriba)\s*(?:a|que|de)?\s*(\d+)/);
+                    if (minMatch) inpMin.value = minMatch[1];
+                }
+
+                // 7. ACTUALIZAR QUERY STRING HIDDEN
+                const hiddenQuery = form.querySelector('#hiddenSearchQuery');
+                if (hiddenQuery) hiddenQuery.value = searchInput.value;
+
+                console.log("Smart Search: Enviando formulario...");
+                form.submit();
+                
+            } catch (err) {
+                console.error("Error en el parsing de la búsqueda inteligente:", err);
+                alert("Hubo un error al interpretar la búsqueda. Por favor, inténtalo de nuevo o usa los filtros manuales.");
+            }
+        };
+
+        searchInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                processAndSubmitQuery();
+            }
+        });
+
+        // Suggestion Chips Click Logic
+        document.querySelectorAll('.search-suggestion').forEach(item => {
+            item.addEventListener('click', function(e) {
+                e.preventDefault();
+                const text = this.innerText.replace(/"/g, '');
+                searchInput.value = text;
+                processAndSubmitQuery();
+            });
+        });
+
+    });
 </script>
 
 </body>

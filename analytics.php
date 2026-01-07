@@ -754,8 +754,48 @@ try {
         }
     });
 </script>
-<script>
-    // --- SMART SEARCH LOGIC (NLP SIMULATION) ---
+
+    <!-- Toast Container -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" id="globalToastContainer" style="z-index: 10000;"></div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+    // Utilidad: mostrar toast Bootstrap (o fallback) en la esquina superior derecha
+    window.showToast = function(message, type = 'success') {
+        const container = document.getElementById('globalToastContainer');
+        if (!container) return alert(message);
+        
+        // Fix: Warning text should be dark for better contrast on yellow
+        const color = type === 'danger' ? 'bg-danger text-white' : type === 'warning' ? 'bg-warning text-dark' : 'bg-success text-white';
+        const closeBtnClass = type === 'warning' ? 'btn-close' : 'btn-close btn-close-white';
+        
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = `
+            <div class="toast align-items-center ${color}" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="3000">
+                <div class="d-flex">
+                    <div class="toast-body">${message}</div>
+                    <button type="button" class="${closeBtnClass} me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+            </div>`;
+        const toastEl = wrapper.firstElementChild;
+        container.appendChild(toastEl);
+        try {
+                const toast = new bootstrap.Toast(toastEl);
+                toast.show();
+                toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
+        } catch (e) {
+                // Fallback si Bootstrap.Toast no está disponible
+                const alt = document.createElement('div');
+                alt.className = 'alert ' + (type === 'danger' ? 'alert-danger' : type === 'warning' ? 'alert-warning' : 'alert-success');
+                alt.textContent = message;
+                container.appendChild(alt);
+                setTimeout(() => alt.remove(), 3000);
+                toastEl.remove();
+        }
+    };
+
     document.addEventListener('DOMContentLoaded', function() {
         console.log("Smart Search: Script loaded.");
         
@@ -842,7 +882,7 @@ try {
                 
             } catch (err) {
                 console.error("Error en el parsing de la búsqueda inteligente:", err);
-                alert("Hubo un error al interpretar la búsqueda. Por favor, inténtalo de nuevo o usa los filtros manuales.");
+                window.showToast("Hubo un error al interpretar la búsqueda. Por favor, inténtalo de nuevo.", "danger");
             }
         };
 
@@ -864,5 +904,7 @@ try {
         });
 
     });
+    </script>
 </body>
 </html>
+```
