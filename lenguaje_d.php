@@ -139,6 +139,21 @@ try {
     $stmt_success->execute($params);
     $success_count = (int)$stmt_success->fetchColumn();
 
+    // --- DATA FOR NEW CHARTS ---
+
+    // 1. Timeline (Exams per Day)
+    // Note: Adjusting date format for SQL group by based on typical DB (assuming PostgreSQL/MySQL, using generic approach if possible but here tailored to what seems like Postgres 'EXTRACT' or MySQL 'DATE')
+    // Since previous queries use 'EXTRACT(MONTH FROM ...)', it likely supports standard SQL or Postgres.
+    // Let's use string formatting for safety in PHP or simple date(fecha_realizacion)
+    $stmt_timeline = $pdo->prepare("SELECT DATE(fecha_realizacion) as fecha, COUNT(*) as count FROM resultados r WHERE 1=1 " . $where_chunk . " GROUP BY DATE(fecha_realizacion) ORDER BY fecha ASC");
+    $stmt_timeline->execute($params);
+    $timeline_data = $stmt_timeline->fetchAll(PDO::FETCH_ASSOC);
+
+    // 2. Score Distribution (Histogram buckets: <60, 60-70, 70-80, 80-90, 90-100)
+    // We will calculate this from the full results fetch to save a complex DB query
+    
+    // 3. Demographics (Gender, Parallel) - also calculated from full results
+
     // Finalmente, obtener la lista de resultados para la tabla
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -148,9 +163,16 @@ try {
     die("Error en agregación de datos: " . $e->getMessage());
 }
 
-// 6. PROCESAMIENTO POST-CONSULTA (Cálculos por fila para la tabla)
+// 6. PROCESAMIENTO POST-CONSULTA (Cálculos por fila para la tabla + Agregaciones ChartJS)
 $resultados = [];
+
+// Init aggregation containers
+$dist_notas = ['<60' => 0, '60-70' => 0, '70-80' => 0, '80-90' => 0, '90-100' => 0];
+$dist_genero = ['Masculino' => 0, 'Femenino' => 0, 'Otro' => 0];
+$dist_paralelo = [];
+
 foreach ($resultados_raw as $row) {
+    // ... logic for table row ...
     $swaps = (int)($row['intentos_tab_switch'] ?? 0);
     $time  = (int)($row['segundos_fuera'] ?? 0);
     if ($swaps == 0 && $time == 0) $nivel = 'limpio';
@@ -160,10 +182,31 @@ foreach ($resultados_raw as $row) {
 
     $puntos_obtenidos = (float)$row['puntos_obtenidos'];
     $nota_calculada = (250 > 0) ? ($puntos_obtenidos / 250) * 100 : 0;
-    $row['nota_sobre_100'] = round($nota_calculada, 2);
+    $nota_final = round($nota_calculada, 2);
+    
+    $row['nota_sobre_100'] = $nota_final;
     $row['nivel_integridad'] = $nivel;
     $resultados[] = $row;
+
+    // Aggregations for Charts
+    // Score Dist
+    if ($nota_final < 60) $dist_notas['<60']++;
+    elseif ($nota_final < 70) $dist_notas['60-70']++;
+    elseif ($nota_final < 80) $dist_notas['70-80']++;
+    elseif ($nota_final < 90) $dist_notas['80-90']++;
+    else $dist_notas['90-100']++;
+
+    // Gender Dist
+    $g = ucfirst(strtolower($row['genero'] ?? 'Otro'));
+    if (!isset($dist_genero[$g])) $dist_genero[$g] = 0;
+    $dist_genero[$g]++;
+
+    // Parallel Dist
+    $p = strtoupper($row['paralelo'] ?? 'N/A');
+    if (!isset($dist_paralelo[$p])) $dist_paralelo[$p] = 0;
+    $dist_paralelo[$p]++;
 }
+ksort($dist_paralelo); // Sort parallels A-Z
 
 // 7. DATOS PARA GRÁFICOS - Agrupado por Quiz/Materia
 $stats_por_quiz = [];
@@ -901,27 +944,90 @@ function getScoreBadge($nota) {
 
     <!-- Analytics Section -->
     <?php if (!empty($stats_por_quiz)): ?>
-    <div class="mt-5">
+    <div class="mt-5 mb-5">
         <h5 class="fw-bold mb-4">
-            <i class="fas fa-chart-bar me-2" style="color: #667eea;"></i>
-            Análisis de Rendimiento por Materia
+            <i class="fas fa-chart-pie me-2" style="color: #667eea;"></i>
+            Análisis Profundo
         </h5>
 
+        <!-- Row 1: Timeline & Demographics -->
+        <div class="row g-4 mb-4">
+            <!-- Timeline (Line Chart) -->
+            <div class="col-lg-8">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-chart-line me-2 text-primary"></i>Actividad en el Tiempo
+                        </h6>
+                        <span class="badge bg-light text-secondary border">Últimos dias</span>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="chartTimeline"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Demographics (Doughnut) -->
+            <div class="col-lg-4">
+                <div class="card-custom p-4 h-100">
+                    <h6 class="fw-bold mb-3 text-dark">
+                        <i class="fas fa-users me-2 text-info"></i>Género
+                    </h6>
+                    <div style="height: 250px; position: relative;">
+                        <canvas id="chartGenero"></canvas>
+                    </div>
+                    <div class="mt-3 text-center small text-muted">Distribución de estudiantes evaluados</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 2: Performance & Distribution -->
+        <div class="row g-4 mb-4">
+            <!-- Score Distribution (Bar) -->
+            <div class="col-lg-6">
+                <div class="card-custom p-4 h-100">
+                    <h6 class="fw-bold mb-3 text-dark">
+                        <i class="fas fa-chart-bar me-2 text-warning"></i>Distribución de Notas
+                    </h6>
+                    <div style="height: 250px;">
+                        <canvas id="chartNotasDist"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Parallel Comparison (Bar) -->
+            <div class="col-lg-6">
+                <div class="card-custom p-4 h-100">
+                    <h6 class="fw-bold mb-3 text-dark">
+                        <i class="fas fa-layer-group me-2 text-success"></i>Participación por Paralelo
+                    </h6>
+                    <div style="height: 250px;">
+                        <canvas id="chartParalelos"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 3: Existing Charts (Refined) -->
         <div class="row g-4">
             <div class="col-lg-7">
                 <div class="card-custom p-4 h-100">
                     <h6 class="fw-bold mb-3 text-dark">
                         <i class="fas fa-signal me-2 text-primary"></i>Promedio de Notas por Examen
                     </h6>
-                    <canvas id="chartPromedios"></canvas>
+                    <div style="height: 300px;">
+                        <canvas id="chartPromedios"></canvas>
+                    </div>
                 </div>
             </div>
             <div class="col-lg-5">
                 <div class="card-custom p-4 h-100">
                     <h6 class="fw-bold mb-3 text-dark">
-                        <i class="fas fa-chart-pie me-2 text-success"></i>Tasa de Aprobación General
+                        <i class="fas fa-check-circle me-2 text-success"></i>Tasa de Aprobación Global
                     </h6>
-                    <canvas id="chartAprobacion"></canvas>
+                    <div style="height: 250px; position: relative;">
+                        <canvas id="chartAprobacion"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1096,150 +1202,211 @@ document.addEventListener('change', function(e) {
 document.addEventListener('DOMContentLoaded', function() {
     // Datos desde PHP
     const statsData = <?= json_encode($stats_por_quiz) ?>;
+    const timelineData = <?= json_encode($timeline_data ?? []) ?>;
+    const distNotas = <?= json_encode($dist_notas ?? []) ?>;
+    const distGenero = <?= json_encode($dist_genero ?? []) ?>;
+    const distParalelo = <?= json_encode($dist_paralelo ?? []) ?>;
     
-    // Preparar arrays para los gráficos
-    const materias = Object.keys(statsData);
-    const promedios = materias.map(m => statsData[m].promedio);
-    const totales = materias.map(m => statsData[m].total);
-    const aprobados = materias.map(m => statsData[m].aprobados);
+    // Configuración Global Chart.js
+    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.color = '#718096';
+    Chart.defaults.scale.grid.color = 'rgba(0, 0, 0, 0.05)';
+    Chart.defaults.plugins.tooltip.boxPadding = 5;
+    Chart.defaults.plugins.tooltip.padding = 12;
+    Chart.defaults.plugins.tooltip.cornerRadius = 8;
     
     // Paleta de colores moderna
-    const gradientColors = [
-        'rgba(102, 126, 234, 0.8)',
-        'rgba(118, 75, 162, 0.8)',
-        'rgba(12, 235, 235, 0.8)',
-        'rgba(32, 227, 178, 0.8)',
-        'rgba(240, 147, 251, 0.8)',
-        'rgba(245, 87, 108, 0.8)',
-        'rgba(79, 172, 254, 0.8)',
-        'rgba(0, 242, 254, 0.8)'
-    ];
-    
-    // ============================================
-    // GRÁFICO 1: Promedios por Examen (Barras)
-    // ============================================
-    const ctxPromedios = document.getElementById('chartPromedios');
-    if (ctxPromedios) {
-        new Chart(ctxPromedios, {
-            type: 'bar',
+    const colors = {
+        primary: '#667eea',
+        success: '#10b981',
+        info: '#3b82f6',
+        warning: '#f59e0b',
+        danger: '#ef4444',
+        purple: '#8b5cf6',
+        teal: '#14b8a6',
+        gradients: [
+            'rgba(102, 126, 234, 0.8)', 'rgba(239, 68, 68, 0.8)', 'rgba(245, 158, 11, 0.8)', 
+            'rgba(16, 185, 129, 0.8)', 'rgba(59, 130, 246, 0.8)', 'rgba(139, 92, 246, 0.8)'
+        ]
+    };
+
+    // 1. TIMELINE - Actividad en el Tiempo
+    if(document.getElementById('chartTimeline')) {
+        new Chart(document.getElementById('chartTimeline'), {
+            type: 'line',
             data: {
-                labels: materias,
+                labels: timelineData.map(d => d.fecha),
                 datasets: [{
-                    label: 'Promedio (/100)',
-                    data: promedios,
-                    backgroundColor: gradientColors,
-                    borderColor: gradientColors.map(c => c.replace('0.8', '1')),
+                    label: 'Exámenes Realizados',
+                    data: timelineData.map(d => d.count),
+                    borderColor: colors.primary,
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
                     borderWidth: 2,
-                    borderRadius: 10,
-                    borderSkipped: false,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: {
-                        display: false
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        padding: 12,
-                        titleFont: { size: 14, weight: 'bold' },
-                        bodyFont: { size: 13 },
-                        callbacks: {
-                            label: function(context) {
-                                const materia = context.label;
-                                const promedio = context.parsed.y;
-                                const total = totales[context.dataIndex];
-                                return [
-                                    `Promedio: ${promedio}/100`,
-                                    `Estudiantes: ${total}`
-                                ];
-                            }
-                        }
-                    }
+                    legend: { display: false },
+                    tooltip: { mode: 'index', intersect: false }
                 },
                 scales: {
-                    y: {
-                        beginAtZero: true,
-                        max: 100,
-                        ticks: {
-                            callback: function(value) {
-                                return value + '/100';
-                            },
-                            font: { weight: 600 }
-                        },
-                        grid: {
-                            color: 'rgba(0, 0, 0, 0.05)'
-                        }
-                    },
-                    x: {
-                        ticks: {
-                            font: { weight: 600, size: 11 },
-                            maxRotation: 45,
-                            minRotation: 45
-                        },
-                        grid: {
-                            display: false
-                        }
-                    }
+                    x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+                    y: { beginAtZero: true, border: { display: false } }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
                 }
             }
         });
     }
+
+    // 2. GÉNERO - Distribución
+    if(document.getElementById('chartGenero')) {
+        new Chart(document.getElementById('chartGenero'), {
+            type: 'doughnut',
+            data: {
+                labels: Object.keys(distGenero),
+                datasets: [{
+                    data: Object.values(distGenero),
+                    backgroundColor: [colors.info, colors.danger, colors.warning],
+                    borderWidth: 0,
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '75%',
+                plugins: {
+                    legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } }
+                }
+            }
+        });
+    }
+
+    // 3. NOTAS - Distribución
+    if(document.getElementById('chartNotasDist')) {
+        new Chart(document.getElementById('chartNotasDist'), {
+            type: 'bar',
+            data: {
+                labels: Object.keys(distNotas),
+                datasets: [{
+                    label: 'Estudiantes',
+                    data: Object.values(distNotas),
+                    backgroundColor: [
+                        'rgba(239, 68, 68, 0.7)',  // <60
+                        'rgba(245, 158, 11, 0.7)', // 60-70
+                        'rgba(250, 204, 21, 0.7)', // 70-80
+                        'rgba(16, 185, 129, 0.7)', // 80-90
+                        'rgba(59, 130, 246, 0.7)'  // 90-100
+                    ],
+                    borderRadius: 6,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false } },
+                    y: { beginAtZero: true, border: { display: false } }
+                }
+            }
+        });
+    }
+
+    // 4. PARALELOS - Participación
+    if(document.getElementById('chartParalelos')) {
+        new Chart(document.getElementById('chartParalelos'), {
+            type: 'bar',
+            data: {
+                labels: Object.keys(distParalelo),
+                datasets: [{
+                    label: 'Participantes',
+                    data: Object.values(distParalelo),
+                    backgroundColor: colors.teal,
+                    borderRadius: 4,
+                }]
+            },
+            options: {
+                indexAxis: 'y', // Horizontal bars
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { beginAtZero: true, border: { display: false }, grid: { borderDash: [2, 4] } },
+                    y: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    // Preparar arrays para los gráficos Existentes (Refined)
+    const materias = Object.keys(statsData);
+    const promedios = materias.map(m => statsData[m].promedio);
+    const totales = materias.map(m => statsData[m].total);
+    const aprobados = materias.map(m => statsData[m].aprobados);
     
-    // ============================================
-    // GRÁFICO 2: Tasa de Aprobación Global (Dona)
-    // ============================================
+    // 5. PROMEDIOS (Existente mejorado)
+    if(document.getElementById('chartPromedios')) {
+        new Chart(document.getElementById('chartPromedios'), {
+            type: 'bar',
+            data: {
+                labels: materias,
+                datasets: [{
+                    label: 'Promedio',
+                    data: promedios,
+                    backgroundColor: 'rgba(102, 126, 234, 0.8)',
+                    borderRadius: 8,
+                    barPercentage: 0.6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '/100' } },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    // 6. APROBACIÓN (Existente mejorado)
     const totalAprobados = aprobados.reduce((a, b) => a + b, 0);
     const totalEstudiantes = totales.reduce((a, b) => a + b, 0);
     const totalReprobados = totalEstudiantes - totalAprobados;
-    const tasaAprobacionGlobal = ((totalAprobados / totalEstudiantes) * 100).toFixed(1);
+    const tasaAprobacionGlobal = totalEstudiantes > 0 ? ((totalAprobados / totalEstudiantes) * 100).toFixed(1) : 0;
     
-    const ctxAprobacion = document.getElementById('chartAprobacion');
-    if (ctxAprobacion) {
-        new Chart(ctxAprobacion, {
+    if(document.getElementById('chartAprobacion')) {
+        new Chart(document.getElementById('chartAprobacion'), {
             type: 'doughnut',
             data: {
                 labels: ['Aprobados', 'Reprobados'],
                 datasets: [{
                     data: [totalAprobados, totalReprobados],
-                    backgroundColor: [
-                        'rgba(32, 227, 178, 0.9)',
-                        'rgba(245, 87, 108, 0.9)'
-                    ],
-                    borderColor: ['#fff', '#fff'],
-                    borderWidth: 3,
+                    backgroundColor: [colors.success, colors.danger],
+                    borderWidth: 0,
                     hoverOffset: 10
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                cutout: '70%',
                 plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            padding: 15,
-                            font: { size: 12, weight: 600 },
-                            usePointStyle: true,
-                            pointStyle: 'circle'
-                        }
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        padding: 12,
-                        callbacks: {
-                            label: function(context) {
-                                const label = context.label;
-                                const value = context.parsed;
-                                const percentage = ((value / totalEstudiantes) * 100).toFixed(1);
-                                return `${label}: ${value} (${percentage}%)`;
-                            }
-                        }
-                    }
-                },
-                cutout: '70%'
+                    legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } }
+                }
             },
             plugins: [{
                 id: 'centerText',
@@ -1248,16 +1415,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     ctx.save();
                     const centerX = (chart.chartArea.left + chart.chartArea.right) / 2;
                     const centerY = (chart.chartArea.top + chart.chartArea.bottom) / 2;
-                    
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    
-                    ctx.font = 'bold 28px Inter';
-                    ctx.fillStyle = '#1a202c';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.font = 'bold 24px Inter'; ctx.fillStyle = '#1a202c';
                     ctx.fillText(tasaAprobacionGlobal + '%', centerX, centerY - 10);
-                    
-                    ctx.font = '600 12px Inter';
-                    ctx.fillStyle = '#718096';
+                    ctx.font = '600 11px Inter'; ctx.fillStyle = '#718096';
                     ctx.fillText('Aprobación', centerX, centerY + 15);
                     ctx.restore();
                 }
@@ -1321,82 +1482,156 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        // ==========================================
+        // CONFIGURACIÓN DE INTENCIONES DE BÚSQUEDA (JSON)
+        // ==========================================
+        const SEARCH_PATTERNS = [
+            // --- 1. GÉNERO ---
+            {
+                id: 'genero_fem',
+                triggers: [/mujer|femenino|chicas|niñas|generalas/i],
+                action: (form) => setVal(form, 'select[name="genero"]', 'Femenino')
+            },
+            {
+                id: 'genero_masc',
+                triggers: [/hombre|masculino|chicos|niños|varones/i],
+                action: (form) => setVal(form, 'select[name="genero"]', 'Masculino')
+            },
+
+            // --- 2. RENDIMIENTO ACADÉMICO (Preguntas Humanas) ---
+            {
+                id: 'reprobados',
+                description: 'Estudiantes con nota menor a 70',
+                triggers: [/reprob|perdieron|jalados|pierden|malas notas|bajo rendimiento|fracaso/i],
+                action: (form) => setVal(form, 'input[name="max_nota"]', '69')
+            },
+            {
+                id: 'aprobados',
+                description: 'Estudiantes con nota mayor o igual a 70',
+                triggers: [/pasaron|aprob|ganaron|buenos|regular/i],
+                action: (form) => setVal(form, 'input[name="min_nota"]', '70')
+            },
+            {
+                id: 'excelencia',
+                description: 'Cuadro de honor, notas > 90',
+                triggers: [/honor|excelencia|mejores|destacados|top|brillantes|cracks/i],
+                action: (form) => setVal(form, 'input[name="min_nota"]', '90')
+            },
+
+            // --- 3. INTEGRIDAD / CONDUCTA ---
+            {
+                id: 'riesgo_copia',
+                description: 'Estudiantes con alertas de integridad',
+                triggers: [/copia|trampa|integridad|riesgo|sospechosos|alerta|conducta/i],
+                // Nota: Asumiendo que existe un filtro de integridad o usaremos validación extra
+                // Si no existe el campo directo, podríamos simularlo o filtrar por notas bajas + tiempo fuera
+                action: (form) => {
+                    // Si existiera un input hidden o select específico para integridad:
+                    // setVal(form, 'select[name="integridad"]', 'riesgo'); 
+                    // Como no lo veo explícito en el form HTML visible, lo dejamos como TODO o usamos un query param
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'integridad';
+                    input.value = 'riesgo';
+                    form.appendChild(input);
+                }
+            },
+
+            // --- 4. PARALELO (Regex con captura) ---
+            {
+                id: 'paralelo',
+                triggers: [/\bparalelo\s*([a-h])\b/i, /\bcurso\s*([a-h])\b/i, /\bgrupo\s*([a-h])\b/i],
+                action: (form, match) => setVal(form, 'select[name="paralelo"]', match[1].toUpperCase())
+            },
+
+            // --- 5. EDAD (Regex con captura) ---
+            {
+                id: 'edad',
+                triggers: [/(\d+)\s*(?:años|edad)/i],
+                action: (form, match) => setVal(form, 'input[name="edad"]', match[1])
+            },
+
+            // --- 6. RANGO DE NOTAS (Desigualdades) ---
+            {
+                id: 'nota_max',
+                triggers: [/(?:menor(?:es)?|bajo|menos|inferior(?:es)?|<)\s*(?:a|que|de)?\s*(\d+)/i],
+                action: (form, match) => setVal(form, 'input[name="max_nota"]', match[1])
+            },
+            {
+                id: 'nota_min',
+                triggers: [/(?:mayor(?:es)?|sobre|m[áa]s|arriba|superior(?:es)?|>)\s*(?:a|que|de)?\s*(\d+)/i],
+                action: (form, match) => setVal(form, 'input[name="min_nota"]', match[1])
+            }
+        ];
+
+        // Helpers
+        const setVal = (form, selector, value) => {
+            const el = form.querySelector(selector);
+            if (el) el.value = value;
+        };
+
         const processAndSubmitQuery = () => {
-            console.log("Smart Search: Procesando...");
+            console.log("Smart Search: Procesando (Motor JSON)...");
             const query = searchInput.value.toLowerCase();
+            let matched = false;
 
             try {
-                // 1. Detectar GÉNERO
-                const selGenero = form.querySelector('select[name="genero"]');
-                if (selGenero) {
-                    if (query.match(/mujer|femenino|chicas|niñas/)) selGenero.value = 'Femenino';
-                    else if (query.match(/hombre|masculino|chicos|niños/)) selGenero.value = 'Masculino';
-                }
+                // 1. Detección de patrones
+                SEARCH_PATTERNS.forEach(pattern => {
+                    pattern.triggers.forEach(regex => {
+                        const match = query.match(regex);
+                        if (match) {
+                            console.log(`Patrón detectado: ${pattern.id}`);
+                            pattern.action(form, match);
+                            matched = true;
+                        }
+                    });
+                });
 
-                // 2. Detectar PARALELO
-                const selParalelo = form.querySelector('select[name="paralelo"]');
-                if (selParalelo) {
-                    const paraleloMatch = query.match(/\b([a-h])\b/i) || query.match(/paralelo\s*([a-h])/i);
-                    if (paraleloMatch) selParalelo.value = paraleloMatch[1].toUpperCase();
-                }
-
-                // 3. Detectar EDAD
-                const inpEdad = form.querySelector('input[name="edad"]');
-                if (inpEdad) {
-                    const edadMatch = query.match(/(\d+)\s*(a?os|edad)/);
-                    if (edadMatch) inpEdad.value = edadMatch[1];
-                }
-
-                // 4. Detectar MES
+                // 2. Detección Especial: MESES (Lógica iterativa compleja mejor mantenerla aparte o integrarla si se desea)
                 const selMes = form.querySelector('select[name="mes"]');
                 if (selMes) {
                     const meses = {
-                        'enero': '01', 'febrero': '02', 'marzo': '03', 'abril': '04', 'mayo': '05', 'junio': '06',
-                        'julio': '07', 'agosto': '08', 'septiembre': '09', 'octubre': '10', 'noviembre': '11', 'diciembre': '12'
+                        'enero':'01', 'febrero':'02', 'marzo':'03', 'abril':'04', 'mayo':'05', 'junio':'06',
+                        'julio':'07', 'agosto':'08', 'septiembre':'09', 'octubre':'10', 'noviembre':'11', 'diciembre':'12'
                     };
                     for (const [nombre, val] of Object.entries(meses)) {
                         if (query.includes(nombre)) {
                             selMes.value = val;
+                            matched = true;
                             break;
                         }
                     }
                 }
 
-                // 5. Detectar EXAMEN
+                // 3. Detección Especial: EXAMEN
                 const selQuiz = form.querySelector('select[name="quiz_id"]');
                 if (selQuiz) {
                     const options = selQuiz.options;
                     for (let i = 1; i < options.length; i++) { 
                         if (query.includes(options[i].text.toLowerCase())) {
                             selQuiz.value = options[i].value;
+                            matched = true;
                             break;
                         }
                     }
                 }
 
-                // 6. Detectar RANGO DE NOTAS
-                const inpMax = form.querySelector('input[name="max_nota"]');
-                if (inpMax) {
-                    const maxMatch = query.match(/(?:menor|bajo|menos)\s*(?:a|que|de)?\s*(\d+)/);
-                    if (maxMatch) inpMax.value = maxMatch[1];
-                }
-                
-                const inpMin = form.querySelector('input[name="min_nota"]');
-                if (inpMin) {
-                    const minMatch = query.match(/(?:mayor|sobre|mas|arriba)\s*(?:a|que|de)?\s*(\d+)/);
-                    if (minMatch) inpMin.value = minMatch[1];
-                }
-
-                // 7. ACTUALIZAR QUERY STRING HIDDEN
+                // 4. ACTUALIZAR QUERY STRING HIDDEN
                 const hiddenQuery = form.querySelector('#hiddenSearchQuery');
                 if (hiddenQuery) hiddenQuery.value = searchInput.value;
 
                 console.log("Smart Search: Enviando formulario...");
-                form.submit();
+                // UI Feedback antes de enviar
+                if (matched && window.showToast) {
+                    window.showToast("Búsqueda inteligente aplicada 🧠", "success");
+                }
+                
+                setTimeout(() => form.submit(), 500); // Pequeño delay para ver el toast
                 
             } catch (err) {
-                console.error("Error en el parsing de la búsqueda inteligente:", err);
-                alert("Hubo un error al interpretar la búsqueda. Por favor, inténtalo de nuevo o usa los filtros manuales.");
+                console.error("Error en Smart Search:", err);
+                if(window.showToast) window.showToast("No entendí esa consulta, intenta con palabras clave.", "warning");
             }
         };
 
@@ -1407,14 +1642,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        // Suggestion Chips Click Logic
-        document.querySelectorAll('.search-suggestion').forEach(item => {
-            item.addEventListener('click', function(e) {
-                e.preventDefault();
-                const text = this.innerText.replace(/"/g, '');
-                searchInput.value = text;
-                processAndSubmitQuery();
-            });
+        // Event listener for suggestion chips if they exist
+        document.body.addEventListener('click', function(e) {
+            if(e.target.classList.contains('search-suggestion')) {
+                 e.preventDefault();
+                 searchInput.value = e.target.innerText.replace(/"/g, '');
+                 processAndSubmitQuery();
+            }
         });
 
     });
