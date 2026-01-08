@@ -44,9 +44,41 @@ $sql = "SELECT
 
 $params = [];
 
+// Special handling for "Lengua y Literatura" - merge with "Preguntas Abiertas"
+$merged_quiz_ids = [];
 if ($quiz_id) {
-    $sql .= " AND r.quiz_id = :quiz_id";
-    $params['quiz_id'] = $quiz_id;
+    try {
+        // Check if selected quiz is Lengua y Literatura
+        $stmt_check = $pdo->prepare("SELECT titulo FROM quizzes WHERE id = :id");
+        $stmt_check->execute(['id' => $quiz_id]);
+        $titulo = $stmt_check->fetchColumn();
+        
+        if ($titulo && stripos($titulo, 'Lengua y Literatura') !== false) {
+            // Find all related Lengua y Literatura quizzes
+            $stmt_related = $pdo->prepare("SELECT id FROM quizzes WHERE titulo LIKE '%Lengua y Literatura%'");
+            $stmt_related->execute();
+            $merged_quiz_ids = $stmt_related->fetchAll(PDO::FETCH_COLUMN);
+            
+            if (count($merged_quiz_ids) > 0) {
+                // Build named placeholders
+                $placeholders = [];
+                foreach ($merged_quiz_ids as $idx => $qid) {
+                    $key = "merged_quiz_$idx";
+                    $placeholders[] = ":$key";
+                    $params[$key] = $qid;
+                }
+                $sql .= " AND r.quiz_id IN (" . implode(',', $placeholders) . ")";
+            }
+        } else {
+            // Normal single quiz filter
+            $sql .= " AND r.quiz_id = :quiz_id";
+            $params['quiz_id'] = $quiz_id;
+        }
+    } catch (PDOException $e) {
+        // Fallback to normal behavior if check fails
+        $sql .= " AND r.quiz_id = :quiz_id";
+        $params['quiz_id'] = $quiz_id;
+    }
 }
 if ($fecha_desde) {
     $sql .= " AND r.fecha_realizacion >= :fecha_desde";
@@ -88,7 +120,12 @@ if ($max_nota !== '') {
 // FIX: Capturar los filtros (WHERE) antes de agregar el ORDER BY, para no romper las queries de COUNT/AVG
 $where_chunk = (strpos($sql, ' AND') !== false) ? substr($sql, strpos($sql, ' AND')) : '';
 
-$sql .= " ORDER BY r.fecha_realizacion DESC";
+// ORDER BY: Si hay quizzes combinados, ordenar por estudiante primero
+if (count($merged_quiz_ids) > 1) {
+    $sql .= " ORDER BY u.nombre ASC, r.fecha_realizacion DESC";
+} else {
+    $sql .= " ORDER BY r.fecha_realizacion DESC";
+}
 
 try {
     $stmt = $pdo->prepare($sql);
@@ -757,6 +794,120 @@ function getScoreBadge($nota) {
         </form>
     </div>
 
+    <!-- Analytics Section MOVED TO TOP -->
+    <?php if (!empty($stats_por_quiz)): ?>
+    <div class="mb-5">
+        <h5 class="fw-bold mb-4">
+            <i class="fas fa-chart-pie me-2" style="color: #667eea;"></i>
+            Análisis Profundo
+        </h5>
+
+        <!-- Row 1: Timeline & Demographics -->
+        <div class="row g-4 mb-4">
+            <div class="col-lg-8">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-chart-line me-2 text-primary"></i>Actividad en el Tiempo
+                        </h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadChart('chartTimeline', 'actividad_tiempo')">
+                            <i class="fas fa-download me-1"></i>PNG
+                        </button>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="chartTimeline"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-users me-2 text-info"></i>Género
+                        </h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadChart('chartGenero', 'distribucion_genero')">
+                            <i class="fas fa-download me-1"></i>PNG
+                        </button>
+                    </div>
+                    <div style="height: 250px; position: relative;">
+                        <canvas id="chartGenero"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 2: Performance & Distribution -->
+        <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-chart-bar me-2 text-warning"></i>Distribución de Notas
+                        </h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadChart('chartNotasDist', 'distribucion_notas')">
+                            <i class="fas fa-download me-1"></i>PNG
+                        </button>
+                    </div>
+                    <div style="height: 250px;">
+                        <canvas id="chartNotasDist"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-lg-6">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-layer-group me-2 text-success"></i>Participación por Paralelo
+                        </h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadChart('chartParalelos', 'participacion_paralelo')">
+                            <i class="fas fa-download me-1"></i>PNG
+                        </button>
+                    </div>
+                    <div style="height: 250px;">
+                        <canvas id="chartParalelos"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 3: Existing Charts -->
+        <div class="row g-4">
+            <div class="col-lg-7">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-signal me-2 text-primary"></i>Promedio de Notas por Examen
+                        </h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadChart('chartPromedios', 'promedios_examen')">
+                            <i class="fas fa-download me-1"></i>PNG
+                        </button>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="chartPromedios"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-5">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-check-circle me-2 text-success"></i>Tasa de Aprobación Global
+                        </h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadChart('chartAprobacion', 'tasa_aprobacion')">
+                            <i class="fas fa-download me-1"></i>PNG
+                        </button>
+                    </div>
+                    <div style="height: 250px; position: relative;">
+                        <canvas id="chartAprobacion"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
     <ul class="nav nav-tabs mb-4" id="reportTabs" role="tablist">
         <li class="nav-item">
             <button class="nav-link active" id="results-tab" data-bs-toggle="tab" data-bs-target="#results">Resultados <span class="badge bg-secondary ms-1"><?= $total_examenes ?></span></button>
@@ -942,97 +1093,7 @@ function getScoreBadge($nota) {
         </div>
     </div>
 
-    <!-- Analytics Section -->
-    <?php if (!empty($stats_por_quiz)): ?>
-    <div class="mt-5 mb-5">
-        <h5 class="fw-bold mb-4">
-            <i class="fas fa-chart-pie me-2" style="color: #667eea;"></i>
-            Análisis Profundo
-        </h5>
-
-        <!-- Row 1: Timeline & Demographics -->
-        <div class="row g-4 mb-4">
-            <!-- Timeline (Line Chart) -->
-            <div class="col-lg-8">
-                <div class="card-custom p-4 h-100">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h6 class="fw-bold mb-0 text-dark">
-                            <i class="fas fa-chart-line me-2 text-primary"></i>Actividad en el Tiempo
-                        </h6>
-                        <span class="badge bg-light text-secondary border">Últimos dias</span>
-                    </div>
-                    <div style="height: 300px;">
-                        <canvas id="chartTimeline"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Demographics (Doughnut) -->
-            <div class="col-lg-4">
-                <div class="card-custom p-4 h-100">
-                    <h6 class="fw-bold mb-3 text-dark">
-                        <i class="fas fa-users me-2 text-info"></i>Género
-                    </h6>
-                    <div style="height: 250px; position: relative;">
-                        <canvas id="chartGenero"></canvas>
-                    </div>
-                    <div class="mt-3 text-center small text-muted">Distribución de estudiantes evaluados</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Row 2: Performance & Distribution -->
-        <div class="row g-4 mb-4">
-            <!-- Score Distribution (Bar) -->
-            <div class="col-lg-6">
-                <div class="card-custom p-4 h-100">
-                    <h6 class="fw-bold mb-3 text-dark">
-                        <i class="fas fa-chart-bar me-2 text-warning"></i>Distribución de Notas
-                    </h6>
-                    <div style="height: 250px;">
-                        <canvas id="chartNotasDist"></canvas>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Parallel Comparison (Bar) -->
-            <div class="col-lg-6">
-                <div class="card-custom p-4 h-100">
-                    <h6 class="fw-bold mb-3 text-dark">
-                        <i class="fas fa-layer-group me-2 text-success"></i>Participación por Paralelo
-                    </h6>
-                    <div style="height: 250px;">
-                        <canvas id="chartParalelos"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Row 3: Existing Charts (Refined) -->
-        <div class="row g-4">
-            <div class="col-lg-7">
-                <div class="card-custom p-4 h-100">
-                    <h6 class="fw-bold mb-3 text-dark">
-                        <i class="fas fa-signal me-2 text-primary"></i>Promedio de Notas por Examen
-                    </h6>
-                    <div style="height: 300px;">
-                        <canvas id="chartPromedios"></canvas>
-                    </div>
-                </div>
-            </div>
-            <div class="col-lg-5">
-                <div class="card-custom p-4 h-100">
-                    <h6 class="fw-bold mb-3 text-dark">
-                        <i class="fas fa-check-circle me-2 text-success"></i>Tasa de Aprobación Global
-                    </h6>
-                    <div style="height: 250px; position: relative;">
-                        <canvas id="chartAprobacion"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <?php endif; ?>
+    <!-- Analytics Section REMOVED FROM HERE (Moved to top) -->
 </div>
 
 <div class="modal fade" id="justificacionesModal" tabindex="-1" aria-hidden="true">
@@ -1072,6 +1133,33 @@ function getScoreBadge($nota) {
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
+// ==========================================
+// DOWNLOAD CHART AS PNG
+// ==========================================
+function downloadChart(chartId, filename) {
+    const chart = Chart.getChart(chartId);
+    if (!chart) {
+        console.error('Chart not found:', chartId);
+        return;
+    }
+    
+    // Get base64 image
+    const url = chart.toBase64Image('image/png', 1);
+    
+    // Create download link
+    const link = document.createElement('a');
+    link.download = filename + '.png';
+    link.href = url;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Show feedback
+    if (window.showToast) {
+        window.showToast('Gráfico descargado exitosamente 📊', 'success');
+    }
+}
+
 function verJustificaciones(resultadoId) {
     const modalEl = document.getElementById('justificacionesModal');
     const bodyEl = document.getElementById('justificacionesBody');
@@ -1551,7 +1639,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 action: (form, match) => setVal(form, 'input[name="edad"]', match[1])
             },
 
-            // --- 6. RANGO DE NOTAS (Desigualdades) ---
+            // --- 6. NOTA EXACTA (antes de rangos) ---
+            {
+                id: 'nota_exacta',
+                description: 'Nota específica (ej: nota de 50, nota 70)',
+                triggers: [/\bnota\s*(?:de|igual a|=)?\s*(\d+)\b/i],
+                action: (form, match) => {
+                    const nota = match[1];
+                    // Aplicar como rango estrecho (±2 puntos)
+                    const min = Math.max(0, parseInt(nota) - 2);
+                    const max = Math.min(100, parseInt(nota) + 2);
+                    setVal(form, 'input[name="min_nota"]', min.toString());
+                    setVal(form, 'input[name="max_nota"]', max.toString());
+                }
+            },
+
+            // --- 7. RANGO DE NOTAS (Desigualdades) ---
             {
                 id: 'nota_max',
                 triggers: [/(?:menor(?:es)?|bajo|menos|inferior(?:es)?|<)\s*(?:a|que|de)?\s*(\d+)/i],
