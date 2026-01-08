@@ -22,7 +22,13 @@ $quiz_id      = isset($_GET['quiz_id']) && is_numeric($_GET['quiz_id']) ? (int)$
 $fecha_desde  = $_GET['fecha_desde'] ?? '';
 $fecha_hasta  = $_GET['fecha_hasta'] ?? '';
 $genero       = $_GET['genero'] ?? '';
-$edad         = isset($_GET['edad']) && is_numeric($_GET['edad']) ? (int)$_GET['edad'] : '';
+
+// Corregir filtro de edad para que esté vacío por defecto
+$edad = '';
+if (isset($_GET['edad']) && $_GET['edad'] !== '' && is_numeric($_GET['edad'])) {
+    $edad = (int)$_GET['edad'];
+}
+
 $paralelo     = $_GET['paralelo'] ?? '';
 $integridad   = $_GET['integridad'] ?? '';
 // Nuevo filtro: mostrar solo exámenes marcados como muestra
@@ -207,6 +213,7 @@ $resultados = [];
 $dist_notas = ['<60' => 0, '60-70' => 0, '70-80' => 0, '80-90' => 0, '90-100' => 0];
 $dist_genero = ['Masculino' => 0, 'Femenino' => 0, 'Otro' => 0];
 $dist_paralelo = [];
+$dist_edad = []; // New: Age distribution with scores
 
 foreach ($resultados_raw as $row) {
     // ... logic for table row ...
@@ -242,8 +249,19 @@ foreach ($resultados_raw as $row) {
     $p = strtoupper($row['paralelo'] ?? 'N/A');
     if (!isset($dist_paralelo[$p])) $dist_paralelo[$p] = 0;
     $dist_paralelo[$p]++;
+
+    // Age Dist (with average scores)
+    $edad = $row['edad'] ?? 'N/A';
+    if ($edad !== 'N/A') {
+        if (!isset($dist_edad[$edad])) {
+            $dist_edad[$edad] = ['count' => 0, 'sum_notas' => 0];
+        }
+        $dist_edad[$edad]['count']++;
+        $dist_edad[$edad]['sum_notas'] += $nota_final;
+    }
 }
 ksort($dist_paralelo); // Sort parallels A-Z
+ksort($dist_edad); // Sort ages numerically
 
 // 7. DATOS PARA GRÁFICOS - Agrupado por Quiz/Materia
 $stats_por_quiz = [];
@@ -763,7 +781,7 @@ function getScoreBadge($nota) {
             </div>
             <div class="col-md-2">
                 <label class="form-label small fw-bold text-muted">Edad</label>
-                <input type="number" name="edad" class="form-control form-control-sm" value="<?= htmlspecialchars($edad) ?>" placeholder="Ej: 15">
+                <input type="number" name="edad" class="form-control form-control-sm" value="<?= htmlspecialchars($edad) ?>" placeholder="Ej: 15" autocomplete="off">
             </div>
             <div class="col-md-2">
                 <label class="form-label small fw-bold text-muted">Paralelo</label>
@@ -814,7 +832,7 @@ function getScoreBadge($nota) {
                             <i class="fas fa-download me-1"></i>PNG
                         </button>
                     </div>
-                    <div style="height: 300px;">
+                    <div style="height: 350px;">
                         <canvas id="chartTimeline"></canvas>
                     </div>
                 </div>
@@ -830,7 +848,7 @@ function getScoreBadge($nota) {
                             <i class="fas fa-download me-1"></i>PNG
                         </button>
                     </div>
-                    <div style="height: 250px; position: relative;">
+                    <div style="height: 300px; position: relative;">
                         <canvas id="chartGenero"></canvas>
                     </div>
                 </div>
@@ -839,7 +857,7 @@ function getScoreBadge($nota) {
 
         <!-- Row 2: Performance & Distribution -->
         <div class="row g-4 mb-4">
-            <div class="col-lg-6">
+            <div class="col-lg-4">
                 <div class="card-custom p-4 h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6 class="fw-bold mb-0 text-dark">
@@ -849,13 +867,13 @@ function getScoreBadge($nota) {
                             <i class="fas fa-download me-1"></i>PNG
                         </button>
                     </div>
-                    <div style="height: 250px;">
+                    <div style="height: 300px;">
                         <canvas id="chartNotasDist"></canvas>
                     </div>
                 </div>
             </div>
             
-            <div class="col-lg-6">
+            <div class="col-lg-4">
                 <div class="card-custom p-4 h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6 class="fw-bold mb-0 text-dark">
@@ -865,14 +883,86 @@ function getScoreBadge($nota) {
                             <i class="fas fa-download me-1"></i>PNG
                         </button>
                     </div>
-                    <div style="height: 250px;">
+                    <div style="height: 300px;">
                         <canvas id="chartParalelos"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-birthday-cake me-2 text-danger"></i>Métricas por Edad
+                        </h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadChart('chartEdad', 'metricas_edad')">
+                            <i class="fas fa-download me-1"></i>PNG
+                        </button>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="chartEdad"></canvas>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Row 3: Existing Charts -->
+        <!-- Row 3: Ladder Chart & Conclusions Preview -->
+        <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-stairs me-2 text-purple"></i>Escalera de Rendimiento
+                        </h6>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadChart('chartLadder', 'escalera_rendimiento')">
+                            <i class="fas fa-download me-1"></i>PNG
+                        </button>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="chartLadder"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-6">
+                <div class="card-custom p-4 h-100">
+                    <h6 class="fw-bold mb-3 text-dark">
+                        <i class="fas fa-lightbulb me-2 text-warning"></i>Conclusiones Clave
+                    </h6>
+                    <div class="conclusions-preview">
+                        <?php
+                        $insights = [];
+                        if ($promedio_general >= 80) {
+                            $insights[] = ['icon' => 'fa-trophy', 'color' => 'success', 'text' => 'Rendimiento general excelente con promedio de ' . $promedio_general];
+                        } elseif ($promedio_general >= 70) {
+                            $insights[] = ['icon' => 'fa-check-circle', 'color' => 'info', 'text' => 'Rendimiento satisfactorio con promedio de ' . $promedio_general];
+                        } else {
+                            $insights[] = ['icon' => 'fa-exclamation-triangle', 'color' => 'warning', 'text' => 'Se requiere atención: promedio de ' . $promedio_general];
+                        }
+                        
+                        if ($tasa_aprobacion >= 80) {
+                            $insights[] = ['icon' => 'fa-users', 'color' => 'success', 'text' => 'Alta tasa de aprobación: ' . $tasa_aprobacion . '%'];
+                        } elseif ($tasa_aprobacion < 60) {
+                            $insights[] = ['icon' => 'fa-user-times', 'color' => 'danger', 'text' => 'Tasa de aprobación baja: ' . $tasa_aprobacion . '%'];
+                        }
+                        
+                        if ($total_anomalias > ($total_examenes * 0.2)) {
+                            $insights[] = ['icon' => 'fa-shield-alt', 'color' => 'danger', 'text' => 'Alertas de integridad elevadas: ' . $total_anomalias . ' casos'];
+                        }
+                        
+                        foreach ($insights as $insight):
+                        ?>
+                        <div class="insight-item mb-2">
+                            <i class="fas <?= $insight['icon'] ?> text-<?= $insight['color'] ?> me-2"></i>
+                            <span class="small"><?= $insight['text'] ?></span>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 4: Existing Charts -->
         <div class="row g-4">
             <div class="col-lg-7">
                 <div class="card-custom p-4 h-100">
@@ -884,7 +974,7 @@ function getScoreBadge($nota) {
                             <i class="fas fa-download me-1"></i>PNG
                         </button>
                     </div>
-                    <div style="height: 300px;">
+                    <div style="height: 350px;">
                         <canvas id="chartPromedios"></canvas>
                     </div>
                 </div>
@@ -899,7 +989,7 @@ function getScoreBadge($nota) {
                             <i class="fas fa-download me-1"></i>PNG
                         </button>
                     </div>
-                    <div style="height: 250px; position: relative;">
+                    <div style="height: 300px; position: relative;">
                         <canvas id="chartAprobacion"></canvas>
                     </div>
                 </div>
@@ -1132,6 +1222,7 @@ function getScoreBadge($nota) {
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 <script>
 // ==========================================
 // DOWNLOAD CHART AS PNG
@@ -1143,21 +1234,57 @@ function downloadChart(chartId, filename) {
         return;
     }
     
-    // Get base64 image
-    const url = chart.toBase64Image('image/png', 1);
+    // Store original background color
+    const originalBgColor = chart.options.plugins?.backgroundColor;
     
-    // Create download link
-    const link = document.createElement('a');
-    link.download = filename + '.png';
-    link.href = url;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Set white background for export
+    if (!chart.options.plugins) chart.options.plugins = {};
+    chart.options.plugins.backgroundColor = '#ffffff';
     
-    // Show feedback
-    if (window.showToast) {
-        window.showToast('Gráfico descargado exitosamente 📊', 'success');
-    }
+    // Force render with animation disabled to ensure datalabels are included
+    chart.options.animation = false;
+    chart.update();
+    
+    // Small delay to ensure render is complete
+    setTimeout(() => {
+        // Get canvas and create new one with white background
+        const canvas = chart.canvas;
+        const ctx = canvas.getContext('2d');
+        
+        // Create temporary canvas
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        // Fill with white background
+        tempCtx.fillStyle = '#ffffff';
+        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        
+        // Draw chart on top
+        tempCtx.drawImage(canvas, 0, 0);
+        
+        // Get base64 image from temp canvas
+        const url = tempCanvas.toDataURL('image/png', 1);
+        
+        // Create download link
+        const link = document.createElement('a');
+        link.download = filename + '.png';
+        link.href = url;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Restore original settings
+        chart.options.plugins.backgroundColor = originalBgColor;
+        chart.options.animation = true;
+        chart.update();
+        
+        // Show feedback
+        if (window.showToast) {
+            window.showToast('Gráfico descargado exitosamente 📊', 'success');
+        }
+    }, 100);
 }
 
 function verJustificaciones(resultadoId) {
@@ -1294,6 +1421,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const distNotas = <?= json_encode($dist_notas ?? []) ?>;
     const distGenero = <?= json_encode($dist_genero ?? []) ?>;
     const distParalelo = <?= json_encode($dist_paralelo ?? []) ?>;
+    const distEdad = <?= json_encode($dist_edad ?? []) ?>;
     
     // Configuración Global Chart.js
     Chart.defaults.font.family = "'Inter', sans-serif";
@@ -1302,6 +1430,10 @@ document.addEventListener('DOMContentLoaded', function() {
     Chart.defaults.plugins.tooltip.boxPadding = 5;
     Chart.defaults.plugins.tooltip.padding = 12;
     Chart.defaults.plugins.tooltip.cornerRadius = 8;
+    
+    // Disable datalabels by default (enable per chart)
+    Chart.register(ChartDataLabels);
+    Chart.defaults.set('plugins.datalabels', { display: false });
     
     // Paleta de colores moderna
     const colors = {
@@ -1341,7 +1473,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 maintainAspectRatio: false,
                 plugins: {
                     legend: { display: false },
-                    tooltip: { mode: 'index', intersect: false }
+                    tooltip: { mode: 'index', intersect: false },
+                    datalabels: {
+                        display: true,
+                        align: 'top',
+                        color: colors.primary,
+                        font: { weight: 'bold', size: 11 }
+                    }
                 },
                 scales: {
                     x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } },
@@ -1374,7 +1512,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 maintainAspectRatio: false,
                 cutout: '75%',
                 plugins: {
-                    legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } }
+                    legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } },
+                    datalabels: {
+                        display: true,
+                        formatter: (value, ctx) => {
+                            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = ((value / total) * 100).toFixed(1);
+                            return percentage + '%';
+                        },
+                        color: '#fff',
+                        font: { weight: 'bold', size: 14 }
+                    }
                 }
             }
         });
@@ -1403,7 +1551,16 @@ document.addEventListener('DOMContentLoaded', function() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+                plugins: { 
+                    legend: { display: false },
+                    datalabels: {
+                        display: true,
+                        anchor: 'end',
+                        align: 'top',
+                        color: '#1a202c',
+                        font: { weight: 'bold', size: 12 }
+                    }
+                },
                 scales: {
                     x: { grid: { display: false } },
                     y: { beginAtZero: true, border: { display: false } }
@@ -1429,13 +1586,108 @@ document.addEventListener('DOMContentLoaded', function() {
                 indexAxis: 'y', // Horizontal bars
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+                plugins: { 
+                    legend: { display: false },
+                    datalabels: {
+                        display: true,
+                        anchor: 'end',
+                        align: 'right',
+                        color: '#1a202c',
+                        font: { weight: 'bold', size: 12 }
+                    }
+                },
                 scales: {
                     x: { beginAtZero: true, border: { display: false }, grid: { borderDash: [2, 4] } },
                     y: { grid: { display: false } }
                 }
             }
         });
+    }
+
+    // 5. EDAD - Métricas por Edad
+    if(document.getElementById('chartEdad')) {
+        const edadLabels = Object.keys(distEdad);
+        
+        // Check if we have data
+        if (edadLabels.length === 0) {
+            console.warn('No age data available for chart');
+            const ctx = document.getElementById('chartEdad').getContext('2d');
+            ctx.font = '14px Inter';
+            ctx.fillStyle = '#718096';
+            ctx.textAlign = 'center';
+            ctx.fillText('No hay datos de edad disponibles', 150, 125);
+        } else {
+            const edadCounts = edadLabels.map(edad => distEdad[edad].count);
+            const edadPromedios = edadLabels.map(edad => {
+                const data = distEdad[edad];
+                return data.count > 0 ? (data.sum_notas / data.count).toFixed(1) : 0;
+            });
+
+            new Chart(document.getElementById('chartEdad'), {
+                type: 'bar',
+                data: {
+                    labels: edadLabels.map(e => e + ' años'),
+                    datasets: [
+                        {
+                            label: 'Estudiantes',
+                            data: edadCounts,
+                            backgroundColor: 'rgba(239, 68, 68, 0.6)',
+                            borderRadius: 4,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Promedio',
+                            data: edadPromedios,
+                            type: 'line',
+                            borderColor: colors.warning,
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            yAxisID: 'y1',
+                            pointRadius: 4,
+                            pointHoverRadius: 6
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { 
+                        legend: { 
+                            position: 'top',
+                            labels: { boxWidth: 12, usePointStyle: true }
+                        },
+                        datalabels: {
+                            display: function(context) {
+                                // Show labels only for bars (dataset 0), not for line (dataset 1)
+                                return context.datasetIndex === 0;
+                            },
+                            anchor: 'end',
+                            align: 'top',
+                            color: '#1a202c',
+                            font: { weight: 'bold', size: 11 }
+                        }
+                    },
+                    scales: {
+                        x: { grid: { display: false } },
+                        y: {
+                            type: 'linear',
+                            position: 'left',
+                            beginAtZero: true,
+                            title: { display: true, text: 'Estudiantes' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            position: 'right',
+                            beginAtZero: true,
+                            max: 100,
+                            title: { display: true, text: 'Promedio' },
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                }
+            });
+        }
     }
 
     // Preparar arrays para los gráficos Existentes (Refined)
@@ -1461,7 +1713,17 @@ document.addEventListener('DOMContentLoaded', function() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+                plugins: { 
+                    legend: { display: false },
+                    datalabels: {
+                        display: true,
+                        anchor: 'end',
+                        align: 'top',
+                        formatter: (value) => value + '/100',
+                        color: '#1a202c',
+                        font: { weight: 'bold', size: 11 }
+                    }
+                },
                 scales: {
                     y: { beginAtZero: true, max: 100, ticks: { callback: v => v + '/100' } },
                     x: { grid: { display: false } }
@@ -1493,7 +1755,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 maintainAspectRatio: false,
                 cutout: '70%',
                 plugins: {
-                    legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } }
+                    legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } },
+                    datalabels: {
+                        display: true,
+                        formatter: (value, ctx) => {
+                            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = ((value / total) * 100).toFixed(1);
+                            return percentage + '%';
+                        },
+                        color: '#fff',
+                        font: { weight: 'bold', size: 16 }
+                    }
                 }
             },
             plugins: [{
@@ -1513,6 +1785,67 @@ document.addEventListener('DOMContentLoaded', function() {
             }]
         });
     }
+
+    // 7. LADDER CHART - Escalera de Rendimiento
+    if(document.getElementById('chartLadder')) {
+        // Calculate ladder data
+        const total = totalEstudiantes;
+        const passed = totalAprobados; // ≥70
+        const good = materias.reduce((sum, m) => {
+            const avg = statsData[m].promedio;
+            return sum + (avg >= 80 ? statsData[m].total : 0);
+        }, 0);
+        const excellent = materias.reduce((sum, m) => {
+            const avg = statsData[m].promedio;
+            return sum + (avg >= 90 ? statsData[m].total : 0);
+        }, 0);
+
+        new Chart(document.getElementById('chartLadder'), {
+            type: 'bar',
+            data: {
+                labels: ['Total', 'Aprobados\n(≥70)', 'Buenos\n(≥80)', 'Excelentes\n(≥90)'],
+                datasets: [{
+                    label: 'Estudiantes',
+                    data: [total, passed, good, excellent],
+                    backgroundColor: [
+                        'rgba(102, 126, 234, 0.8)',
+                        'rgba(16, 185, 129, 0.8)',
+                        'rgba(245, 158, 11, 0.8)',
+                        'rgba(239, 68, 68, 0.8)'
+                    ],
+                    borderRadius: 8,
+                    borderSkipped: false
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    datalabels: {
+                        display: true,
+                        anchor: 'end',
+                        align: 'right',
+                        formatter: (value) => value,
+                        color: '#1a202c',
+                        font: { weight: 'bold', size: 13 }
+                    }
+                },
+                scales: {
+                    x: { 
+                        beginAtZero: true,
+                        border: { display: false },
+                        grid: { borderDash: [2, 4] }
+                    },
+                    y: { 
+                        grid: { display: false },
+                        ticks: { font: { size: 12, weight: 600 } }
+                    }
+                }
+            }
+        });
+    }
 });
 <?php endif; ?>
 </script>
@@ -1525,7 +1858,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- Bootstrap JS (Required for Toasts) -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
-    <script>
+    <script type="text/javascript-disabled">
     // Utilidad: mostrar toast Bootstrap (o fallback) en la esquina superior derecha
     window.showToast = function(message, type = 'success') {
         const container = document.getElementById('globalToastContainer');
