@@ -263,9 +263,90 @@ foreach ($resultados_raw as $row) {
 ksort($dist_paralelo); // Sort parallels A-Z
 ksort($dist_edad); // Sort ages numerically
 
-// 7. DATOS PARA GRÁFICOS - Agrupado por Quiz/Materia
+// 7. DATOS ESPECIALES PARA GRÁFICO GLOBAL (MATERIA vs PARALELO)
+// Esta consulta IGNORA los filtros de quiz_id y paralelo para mostrar siempre el panorama completo
+// pero RESPETA filtros de fecha, género, edad, etc.
+$sql_global = "SELECT 
+                q.titulo as quiz_titulo,
+                r.paralelo,
+                COUNT(*) as total,
+                SUM((r.puntos_obtenidos / 250.0) * 100) as suma_notas
+            FROM resultados r
+            JOIN quizzes q ON r.quiz_id = q.id
+            WHERE 1=1";
+
+$params_global = [];
+if ($fecha_desde) {
+    $sql_global .= " AND r.fecha_realizacion >= :gd_desde";
+    $params_global['gd_desde'] = $fecha_desde . ' 00:00:00';
+}
+if ($fecha_hasta) {
+    $sql_global .= " AND r.fecha_realizacion <= :gd_hasta";
+    $params_global['gd_hasta'] = $fecha_hasta . ' 23:59:59';
+}
+if ($genero) {
+    $sql_global .= " AND r.genero = :gd_genero";
+    $params_global['gd_genero'] = $genero;
+}
+if ($edad) { // Usa simple $edad filter (preserve context if filtered by age)
+    $sql_global .= " AND r.edad = :gd_edad";
+    $params_global['gd_edad'] = $edad;
+}
+// NOTA: NO filtramos por quiz_id ni paralelo para el gráfico comparativo global
+
+$sql_global .= " GROUP BY q.titulo, r.paralelo ORDER BY r.paralelo ASC";
+
+try {
+    $stmt_g = $pdo->prepare($sql_global);
+    $stmt_g->execute($params_global);
+    $global_results = $stmt_g->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $global_results = []; // Fail gracefully
+}
+
+// Procesar datos globales para el gráfico
+$stats_materia_paralelo = [];
+foreach ($global_results as $row) {
+    $qt = $row['quiz_titulo'];
+    $p = strtoupper($row['paralelo'] ?? 'SIN PARALELO');
+    if ($p === '') $p = 'SIN PARALELO';
+    
+    if (!isset($stats_materia_paralelo[$qt][$p])) {
+        $stats_materia_paralelo[$qt][$p] = ['total' => 0, 'suma' => 0];
+    }
+    $stats_materia_paralelo[$qt][$p]['total'] += $row['total'];
+    $stats_materia_paralelo[$qt][$p]['suma'] += $row['suma_notas'];
+}
+
+// Estructurar para JS (Global)
+$data_chart_mat_par = [];
+$paralelos_todos = [];
+
+// 1. Obtener lista única de paralelos (Global)
+foreach ($stats_materia_paralelo as $mat => $dataP) {
+    foreach (array_keys($dataP) as $p) {
+        $paralelos_todos[$p] = true;
+    }
+}
+$paralelos_lista = array_keys($paralelos_todos);
+sort($paralelos_lista);
+
+// 2. Estructurar para JS (Global)
+foreach ($stats_materia_paralelo as $mat => $dataP) {
+    $row_data = [];
+    foreach ($paralelos_lista as $p) {
+        if (isset($dataP[$p])) {
+            $prom = round($dataP[$p]['suma'] / $dataP[$p]['total'], 2);
+            $row_data[] = $prom;
+        } else {
+            $row_data[] = 0;
+        }
+    }
+    $data_chart_mat_par[$mat] = $row_data;
+}
+
+// 7. DATOS PARA GRÁFICOS - Agrupado por Quiz/Materia (Contexto Local / Filtrado)
 $stats_por_quiz = [];
-$stats_materia_paralelo = []; // Nuevo acumulador
 foreach ($resultados as $row) {
     $quiz_titulo = $row['quiz_titulo'];
     if (!isset($stats_por_quiz[$quiz_titulo])) {
@@ -280,43 +361,6 @@ foreach ($resultados as $row) {
     if ($row['nota_sobre_100'] >= 70) {
         $stats_por_quiz[$quiz_titulo]['aprobados']++;
     }
-
-    // Agregación Parcial: Materia vs Paralelo (Nuevo Gráfico)
-    $p_key = strtoupper($row['paralelo'] ?? 'SIN PARALELO');
-    if ($p_key === '') $p_key = 'SIN PARALELO';
-    
-    if (!isset($stats_materia_paralelo[$quiz_titulo][$p_key])) {
-        $stats_materia_paralelo[$quiz_titulo][$p_key] = ['total' => 0, 'suma' => 0];
-    }
-    $stats_materia_paralelo[$quiz_titulo][$p_key]['total']++;
-    $stats_materia_paralelo[$quiz_titulo][$p_key]['suma'] += $row['nota_sobre_100'];
-}
-
-// Procesar promedios para Materia/Paralelo
-$data_chart_mat_par = [];
-$paralelos_todos = [];
-
-// 1. Obtener lista única de paralelos encontrados
-foreach ($stats_materia_paralelo as $mat => $dataP) {
-    foreach (array_keys($dataP) as $p) {
-        $paralelos_todos[$p] = true;
-    }
-}
-$paralelos_lista = array_keys($paralelos_todos);
-sort($paralelos_lista);
-
-// 2. Estructurar para JS
-foreach ($stats_materia_paralelo as $mat => $dataP) {
-    $row_data = [];
-    foreach ($paralelos_lista as $p) {
-        if (isset($dataP[$p])) {
-            $prom = round($dataP[$p]['suma'] / $dataP[$p]['total'], 2);
-            $row_data[] = $prom;
-        } else {
-            $row_data[] = 0; // O null si queremos huecos
-        }
-    }
-    $data_chart_mat_par[$mat] = $row_data;
 }
 
 // Calcular promedios
