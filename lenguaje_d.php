@@ -251,13 +251,13 @@ foreach ($resultados_raw as $row) {
     $dist_paralelo[$p]++;
 
     // Age Dist (with average scores)
-    $edad = $row['edad'] ?? 'N/A';
-    if ($edad !== 'N/A') {
-        if (!isset($dist_edad[$edad])) {
-            $dist_edad[$edad] = ['count' => 0, 'sum_notas' => 0];
+    $row_edad = $row['edad'] ?? 'N/A';
+    if ($row_edad !== 'N/A') {
+        if (!isset($dist_edad[$row_edad])) {
+            $dist_edad[$row_edad] = ['count' => 0, 'sum_notas' => 0];
         }
-        $dist_edad[$edad]['count']++;
-        $dist_edad[$edad]['sum_notas'] += $nota_final;
+        $dist_edad[$row_edad]['count']++;
+        $dist_edad[$row_edad]['sum_notas'] += $nota_final;
     }
 }
 ksort($dist_paralelo); // Sort parallels A-Z
@@ -1416,6 +1416,15 @@ document.addEventListener('change', function(e) {
 <?php if (!empty($stats_por_quiz)): ?>
 document.addEventListener('DOMContentLoaded', function() {
     // Datos desde PHP
+    
+    // Forzar el campo de edad a estar vacío en la carga inicial para evitar autocompletado agresivo
+    window.addEventListener('load', function() {
+        const edadInput = document.querySelector('input[name="edad"]');
+        if (edadInput && edadInput.value === '14' && '<?= $edad ?>' === '') {
+            edadInput.value = '';
+        }
+    });
+
     const statsData = <?= json_encode($stats_por_quiz) ?>;
     const timelineData = <?= json_encode($timeline_data ?? []) ?>;
     const distNotas = <?= json_encode($dist_notas ?? []) ?>;
@@ -1858,7 +1867,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- Bootstrap JS (Required for Toasts) -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
-    <script type="text/javascript-disabled">
+    <script>
     // Utilidad: mostrar toast Bootstrap (o fallback) en la esquina superior derecha
     window.showToast = function(message, type = 'success') {
         const container = document.getElementById('globalToastContainer');
