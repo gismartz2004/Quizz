@@ -265,6 +265,7 @@ ksort($dist_edad); // Sort ages numerically
 
 // 7. DATOS PARA GRÁFICOS - Agrupado por Quiz/Materia
 $stats_por_quiz = [];
+$stats_materia_paralelo = []; // Nuevo acumulador
 foreach ($resultados as $row) {
     $quiz_titulo = $row['quiz_titulo'];
     if (!isset($stats_por_quiz[$quiz_titulo])) {
@@ -279,6 +280,43 @@ foreach ($resultados as $row) {
     if ($row['nota_sobre_100'] >= 70) {
         $stats_por_quiz[$quiz_titulo]['aprobados']++;
     }
+
+    // Agregación Parcial: Materia vs Paralelo (Nuevo Gráfico)
+    $p_key = strtoupper($row['paralelo'] ?? 'SIN PARALELO');
+    if ($p_key === '') $p_key = 'SIN PARALELO';
+    
+    if (!isset($stats_materia_paralelo[$quiz_titulo][$p_key])) {
+        $stats_materia_paralelo[$quiz_titulo][$p_key] = ['total' => 0, 'suma' => 0];
+    }
+    $stats_materia_paralelo[$quiz_titulo][$p_key]['total']++;
+    $stats_materia_paralelo[$quiz_titulo][$p_key]['suma'] += $row['nota_sobre_100'];
+}
+
+// Procesar promedios para Materia/Paralelo
+$data_chart_mat_par = [];
+$paralelos_todos = [];
+
+// 1. Obtener lista única de paralelos encontrados
+foreach ($stats_materia_paralelo as $mat => $dataP) {
+    foreach (array_keys($dataP) as $p) {
+        $paralelos_todos[$p] = true;
+    }
+}
+$paralelos_lista = array_keys($paralelos_todos);
+sort($paralelos_lista);
+
+// 2. Estructurar para JS
+foreach ($stats_materia_paralelo as $mat => $dataP) {
+    $row_data = [];
+    foreach ($paralelos_lista as $p) {
+        if (isset($dataP[$p])) {
+            $prom = round($dataP[$p]['suma'] / $dataP[$p]['total'], 2);
+            $row_data[] = $prom;
+        } else {
+            $row_data[] = 0; // O null si queremos huecos
+        }
+    }
+    $data_chart_mat_par[$mat] = $row_data;
 }
 
 // Calcular promedios
@@ -991,6 +1029,22 @@ function getScoreBadge($nota) {
                     </div>
                     <div style="height: 300px; position: relative;">
                         <canvas id="chartAprobacion"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 5: Parallel vs Subject (New) -->
+        <div class="row mt-4 mb-4">
+            <div class="col-12">
+                <div class="card-custom p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                         <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-layer-group me-2 text-primary"></i>Rendimiento por Asignatura y Paralelo
+                        </h6>
+                    </div>
+                    <div style="height: 400px;">
+                        <canvas id="chartMateriaParalelo"></canvas>
                     </div>
                 </div>
             </div>
@@ -1855,6 +1909,86 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    // 8. NUEVO CHART: Materia vs Paralelo
+    if(document.getElementById('chartMateriaParalelo')) {
+        const paralelosLabels = <?= json_encode($paralelos_lista) ?>;
+        const rawData = <?= json_encode($data_chart_mat_par) ?>;
+        
+        // Generar datasets dinámicos
+        const datasets = [];
+        const colorPalette = [
+            'rgba(102, 126, 234, 0.7)',  // Azul
+            'rgba(16, 185, 129, 0.7)',   // Verde
+            'rgba(245, 158, 11, 0.7)',   // Naranja
+            'rgba(239, 68, 68, 0.7)',    // Rojo
+            'rgba(139, 92, 246, 0.7)',   // Violeta
+            'rgba(236, 72, 153, 0.7)',   // Rosa
+            'rgba(14, 165, 233, 0.7)',   // Celeste
+            'rgba(20, 184, 166, 0.7)'    // Teal
+        ];
+
+        let colorIdx = 0;
+        for (const [materia, data] of Object.entries(rawData)) {
+            datasets.push({
+                label: materia,
+                data: data,
+                backgroundColor: colorPalette[colorIdx % colorPalette.length],
+                borderRadius: 4,
+                borderSkipped: false
+            });
+            colorIdx++;
+        }
+
+        new Chart(document.getElementById('chartMateriaParalelo'), {
+            type: 'bar',
+            data: {
+                labels: paralelosLabels, // Eje X: Paralelos (A, B, C...)
+                datasets: datasets       // Barras agrupadas: Materias
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                if (context.parsed.y !== null) {
+                                    label += context.parsed.y + '/100';
+                                }
+                                return label;
+                            }
+                        }
+                    },
+                    datalabels: {
+                        display: true,
+                        anchor: 'end',
+                        align: 'top',
+                        formatter: (value) => value > 0 ? Math.round(value) : '',
+                        color: '#4a5568',
+                        font: { weight: 'bold', size: 10 },
+                        offset: -2
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        title: { display: true, text: 'Promedio' }
+                    },
+                    x: {
+                        title: { display: true, text: 'Paralelos' },
+                        grid: { display: false }
+                    }
+                }
+            }
+        });
+    }
+
 });
 <?php endif; ?>
 </script>
