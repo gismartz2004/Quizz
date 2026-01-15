@@ -38,6 +38,75 @@ $min_nota       = isset($_GET['min_nota']) && is_numeric($_GET['min_nota']) ? (i
 $max_nota       = isset($_GET['max_nota']) && is_numeric($_GET['max_nota']) ? (int)$_GET['max_nota'] : '';
 
 // 4. CONSULTA SQL
+// --- LOGICA DE BÚSQUEDA QA (Antes de filtros normales) ---
+$qa_msg = null;
+$qa_type = $_GET['q_type'] ?? '';
+$qa_val  = $_GET['q_val'] ?? 0;
+
+if ($qa_type === 'count_approved' && is_numeric($qa_val)) {
+    // Calcular cuántos estudiantes aprobaron N materias (Unificando Lengua)
+    try {
+        // Obtenemos TODAS las notas sin filtros para cálculo global
+        $sql_all = "SELECT r.usuario_id, q.titulo, r.puntos_obtenidos, 
+                       (CASE WHEN q.titulo ILIKE '%Preguntas Abiertas%' THEN 20.0 ELSE 250.0 END) as max_puntos
+                    FROM resultados r 
+                    JOIN quizzes q ON r.quiz_id = q.id";
+        $stmt_all = $pdo->query($sql_all);
+        $all_rows = $stmt_all->fetchAll(PDO::FETCH_ASSOC);
+
+        $students = [];
+        foreach ($all_rows as $rw) {
+            $uid = $rw['usuario_id'];
+            $tit = $rw['titulo'];
+            $pts = (float)$rw['puntos_obtenidos'];
+            $max = (float)$rw['max_puntos'];
+            $score = ($max > 0) ? ($pts / $max) * 100 : 0;
+
+            if (!isset($students[$uid])) $students[$uid] = [];
+            
+            // Normalizar nombres de materias para agrupación
+            if (stripos($tit, 'Lengua y Literatura') !== false) {
+                // Separar componente
+                if (stripos($tit, 'Preguntas Abiertas') !== false) {
+                    $students[$uid]['Lengua']['abierta'] = $score;
+                } else {
+                    $students[$uid]['Lengua']['teoria'] = $score;
+                }
+            } else {
+                $students[$uid][$tit] = $score;
+            }
+        }
+
+        $count_approved_N = 0;
+        foreach ($students as $uid => $materias) {
+            $materias_aprobadas = 0;
+            foreach ($materias as $key => $val) {
+                $final_score = 0;
+                if ($key === 'Lengua') {
+                    // Calculo unificado 80/20
+                    $t = $val['teoria'] ?? 0;
+                    $a = $val['abierta'] ?? 0;
+                    // Si falta alguna parte, asumimos 0 en esa parte (o podríamos promediar solo lo que hay, pero 80/20 es estricto)
+                    $final_score = ($t * 0.8) + ($a * 0.2);
+                } else {
+                    $final_score = $val; // Es un valor directo
+                }
+
+                if ($final_score >= 70) {
+                    $materias_aprobadas++;
+                }
+            }
+            if ($materias_aprobadas >= $qa_val) {
+                $count_approved_N++;
+            }
+        }
+        $qa_msg = "Estudiantes que aprobaron $qa_val o más materias: <strong>$count_approved_N</strong>";
+
+    } catch (PDOException $e) {
+        $qa_msg = "Error calculando datos QA: " . $e->getMessage();
+    }
+}
+
 $sql = "SELECT 
             r.*, 
             u.nombre as usuario_nombre, 
@@ -288,113 +357,203 @@ foreach ($resultados_raw as $row) {
 ksort($dist_paralelo); // Sort parallels A-Z
 ksort($dist_edad); // Sort ages numerically
 
-// 7. DATOS ESPECIALES PARA GRÁFICO GLOBAL (MATERIA vs PARALELO)
-// Esta consulta IGNORA los filtros de quiz_id y paralelo para mostrar siempre el panorama completo
-// pero RESPETA filtros de fecha, género, edad, etc.
-$sql_global = "SELECT 
-                q.titulo as quiz_titulo,
+// 7. DATOS UNIFICADOS Y CONCLUSIONES (Lógica Servidor)
+
+// A. Obtener TODOS los resultados relevantes para cálculo global (respetando filtros generales de fecha/genero/edad si aplican, 
+// pero IGNORANDO filtros de quiz/paralelo para los gráficos comparativos globales)
+// Sin embargo, para las "Conclusiones" y "Gráficos Globales", idealmente queremos el panorama completo del curso.
+// Asumiremos que los filtros de FECHA/EDAD/GENERO refinan la "Población de Estudio", pero quiz/paralelo no deben limitar la comparación.
+
+$sql_raw_global = "SELECT 
+                r.usuario_id, 
                 r.paralelo,
-                COUNT(*) as total,
-                SUM((r.puntos_obtenidos / (CASE WHEN q.titulo ILIKE '%Preguntas Abiertas%' THEN 20.0 ELSE 250.0 END)) * 100) as suma_notas
+                r.genero,
+                q.titulo as quiz_titulo,
+                r.puntos_obtenidos,
+                (CASE WHEN q.titulo ILIKE '%Preguntas Abiertas%' THEN 20.0 ELSE 250.0 END) as max_puntos
             FROM resultados r
             JOIN quizzes q ON r.quiz_id = q.id
             WHERE 1=1";
 
-$params_global = [];
-if ($fecha_desde) {
-    $sql_global .= " AND r.fecha_realizacion >= :gd_desde";
-    $params_global['gd_desde'] = $fecha_desde . ' 00:00:00';
-}
-if ($fecha_hasta) {
-    $sql_global .= " AND r.fecha_realizacion <= :gd_hasta";
-    $params_global['gd_hasta'] = $fecha_hasta . ' 23:59:59';
-}
-if ($genero) {
-    $sql_global .= " AND r.genero = :gd_genero";
-    $params_global['gd_genero'] = $genero;
-}
-if ($edad) { // Usa simple $edad filter (preserve context if filtered by age)
-    $sql_global .= " AND r.edad = :gd_edad";
-    $params_global['gd_edad'] = $edad;
-}
-// NOTA: NO filtramos por quiz_id ni paralelo para el gráfico comparativo global
-
-$sql_global .= " GROUP BY q.titulo, r.paralelo ORDER BY r.paralelo ASC";
+$params_raw = [];
+if ($fecha_desde) { $sql_raw_global .= " AND r.fecha_realizacion >= :rd_desde"; $params_raw['rd_desde'] = $fecha_desde . ' 00:00:00'; }
+if ($fecha_hasta) { $sql_raw_global .= " AND r.fecha_realizacion <= :rd_hasta"; $params_raw['rd_hasta'] = $fecha_hasta . ' 23:59:59'; }
+if ($genero) { $sql_raw_global .= " AND r.genero = :rd_genero"; $params_raw['rd_genero'] = $genero; }
+if ($edad) { $sql_raw_global .= " AND r.edad = :rd_edad"; $params_raw['rd_edad'] = $edad; }
 
 try {
-    $stmt_g = $pdo->prepare($sql_global);
-    $stmt_g->execute($params_global);
-    $global_results = $stmt_g->fetchAll(PDO::FETCH_ASSOC);
+    $stmt_rg = $pdo->prepare($sql_raw_global);
+    $stmt_rg->execute($params_raw);
+    $all_results_raw = $stmt_rg->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    $global_results = []; // Fail gracefully
+    $all_results_raw = [];
 }
 
-// Procesar datos globales para el gráfico
-$stats_materia_paralelo = [];
-foreach ($global_results as $row) {
-    $qt = $row['quiz_titulo'];
-    $p = strtoupper($row['paralelo'] ?? 'SIN PARALELO');
-    if ($p === '') $p = 'SIN PARALELO';
+// B. PROCESAMIENTO UNIFICADO (Por Estudiante)
+$estudiantes_calcs = [];
+
+foreach ($all_results_raw as $row) {
+    $uid = $row['usuario_id'];
+    $tit = $row['quiz_titulo'];
+    $par = strtoupper($row['paralelo'] ?? 'SIN PARALELO');
+    $gen = $row['genero'];
     
-    if (!isset($stats_materia_paralelo[$qt][$p])) {
-        $stats_materia_paralelo[$qt][$p] = ['total' => 0, 'suma' => 0];
+    // Calcular nota sobre 100
+    $pts = (float)$row['puntos_obtenidos'];
+    $max = (float)$row['max_puntos'];
+    $score = ($max > 0) ? ($pts / $max) * 100 : 0;
+
+    if (!isset($estudiantes_calcs[$uid])) {
+        $estudiantes_calcs[$uid] = [
+            'materias' => [],
+            'meta' => ['paralelo' => $par, 'genero' => $gen]
+        ];
     }
-    $stats_materia_paralelo[$qt][$p]['total'] += $row['total'];
-    $stats_materia_paralelo[$qt][$p]['suma'] += $row['suma_notas'];
+
+    // Lógica 80/20 para Lengua
+    if (stripos($tit, 'Lengua y Literatura') !== false) {
+        if (stripos($tit, 'Preguntas Abiertas') !== false) {
+            $estudiantes_calcs[$uid]['materias']['Lengua y Literatura']['abierta'] = $score;
+        } else {
+            $estudiantes_calcs[$uid]['materias']['Lengua y Literatura']['teoria'] = $score;
+        }
+    } else {
+        $estudiantes_calcs[$uid]['materias'][$tit]['nota_unica'] = $score;
+    }
 }
 
-// Estructurar para JS (Global)
-$data_chart_mat_par = [];
-$paralelos_todos = [];
+// C. CALCULAR NOTAS FINALES Y METRICAS GLOBALES
+$stats_materias_global = []; // Promedios por materia
+$stats_paralelos = []; // Notas por paralelo (para identificar mejor paralelo)
+$stats_genero = []; // Notas por genero
+$stats_jornada = ['Matutina' => ['sum'=>0, 'count'=>0], 'Vespertina' => ['sum'=>0, 'count'=>0]]; // A-E vs F-H
 
-// 1. Obtener lista única de paralelos (Global)
-foreach ($stats_materia_paralelo as $mat => $dataP) {
-    foreach (array_keys($dataP) as $p) {
-        $paralelos_todos[$p] = true;
+$conteo_aprobadas_2 = 0;
+$conteo_aprobadas_3 = 0;
+
+$data_chart_mat_par_unified = []; // Estructura: [Materia][Paralelo] = Promedio
+
+foreach ($estudiantes_calcs as $uid => $data) {
+    $par = $data['meta']['paralelo'];
+    $gen = $data['meta']['genero'];
+    
+    // Determinar jornada
+    $jornada = (preg_match('/^[A-E]$/', $par)) ? 'Matutina' : 'Vespertina';
+
+    $materias_aprobadas_user = 0;
+
+    foreach ($data['materias'] as $materia_nombre => $components) {
+        // Calcular Nota Final Unificada
+        $final_score = 0;
+        if ($materia_nombre === 'Lengua y Literatura') {
+            $t = $components['teoria'] ?? 0;
+            $a = $components['abierta'] ?? 0;
+            $final_score = ($t * 0.8) + ($a * 0.2);
+        } else {
+            $final_score = $components['nota_unica'] ?? 0;
+        }
+
+        // 1. Métricas de Aprobación
+        if ($final_score >= 70) $materias_aprobadas_user++;
+
+        // 2. Acumular para Gráficos Globales (Materia vs Paralelo)
+        if (!isset($data_chart_mat_par_unified[$materia_nombre][$par])) {
+            $data_chart_mat_par_unified[$materia_nombre][$par] = ['sum'=>0, 'count'=>0];
+        }
+        $data_chart_mat_par_unified[$materia_nombre][$par]['sum'] += $final_score;
+        $data_chart_mat_par_unified[$materia_nombre][$par]['count']++;
+
+        // 3. Acumular para Promedios Generales por Materia
+        if (!isset($stats_materias_global[$materia_nombre])) {
+            $stats_materias_global[$materia_nombre] = ['sum'=>0, 'count'=>0, 'aprobados'=>0];
+        }
+        $stats_materias_global[$materia_nombre]['sum'] += $final_score;
+        $stats_materias_global[$materia_nombre]['count']++;
+        if ($final_score >= 70) $stats_materias_global[$materia_nombre]['aprobados']++;
+
+        // 4. Métricas de Segmento (Para Conclusiones)
+        // Por Paralelo
+        if (!isset($stats_paralelos[$par])) $stats_paralelos[$par] = ['sum'=>0, 'count'=>0];
+        $stats_paralelos[$par]['sum'] += $final_score;
+        $stats_paralelos[$par]['count']++;
+
+        // Por Genero
+        if (!isset($stats_genero[$gen])) $stats_genero[$gen] = ['sum'=>0, 'count'=>0];
+        $stats_genero[$gen]['sum'] += $final_score;
+        $stats_genero[$gen]['count']++;
+
+        // Por Jornada
+        $stats_jornada[$jornada]['sum'] += $final_score;
+        $stats_jornada[$jornada]['count']++;
     }
-}
-$paralelos_lista = array_keys($paralelos_todos);
-sort($paralelos_lista);
 
-// 2. Estructurar para JS (Global)
-foreach ($stats_materia_paralelo as $mat => $dataP) {
+    if ($materias_aprobadas_user >= 2) $conteo_aprobadas_2++;
+    if ($materias_aprobadas_user >= 3) $conteo_aprobadas_3++;
+}
+
+// D. PREPARAR DATOS FINALES PARA GRAFICOS JS
+// Grafico 1: Promedios por Materia (Unificado)
+$stats_por_quiz_unified = [];
+foreach ($stats_materias_global as $mat => $d) {
+    // Renombrar si es necesario, pero ya unificamos en el loop
+    $stats_por_quiz_unified[$mat] = [
+        'promedio' => round($d['sum'] / $d['count'], 2),
+        'total' => $d['count'], // Esto es total de *exámenes* (o estudiantes únicos por materia)
+        'aprobados' => $d['aprobados']
+    ];
+}
+
+// Grafico 2: Materia vs Paralelo (Grid)
+// Obtener lista completa de paralelos del dataset
+$all_pars = array_keys($stats_paralelos);
+sort($all_pars);
+$paralelos_lista = $all_pars; // Usar globalmente
+
+$data_chart_mat_par_final = [];
+foreach ($data_chart_mat_par_unified as $mat => $par_data) {
     $row_data = [];
     foreach ($paralelos_lista as $p) {
-        if (isset($dataP[$p])) {
-            $prom = round($dataP[$p]['suma'] / $dataP[$p]['total'], 2);
-            $row_data[] = $prom;
+        if (isset($par_data[$p])) {
+            $row_data[] = round($par_data[$p]['sum'] / $par_data[$p]['count'], 2);
         } else {
             $row_data[] = 0;
         }
     }
-    $data_chart_mat_par[$mat] = $row_data;
+    $data_chart_mat_par_final[$mat] = $row_data;
 }
 
-// 7. DATOS PARA GRÁFICOS - Agrupado por Quiz/Materia (Contexto Local / Filtrado)
-$stats_por_quiz = [];
-foreach ($resultados as $row) {
-    $quiz_titulo = $row['quiz_titulo'];
-    if (!isset($stats_por_quiz[$quiz_titulo])) {
-        $stats_por_quiz[$quiz_titulo] = [
-            'total' => 0,
-            'suma_notas' => 0,
-            'aprobados' => 0
-        ];
-    }
-    $stats_por_quiz[$quiz_titulo]['total']++;
-    $stats_por_quiz[$quiz_titulo]['suma_notas'] += $row['nota_sobre_100'];
-    if ($row['nota_sobre_100'] >= 70) {
-        $stats_por_quiz[$quiz_titulo]['aprobados']++;
-    }
+// E. CONCLUSIONES (Top Stats)
+// Mejor Paralelo
+$best_par_name = 'N/A';
+$best_par_avg = -1;
+foreach ($stats_paralelos as $p => $d) {
+    $avg = $d['count'] > 0 ? $d['sum'] / $d['count'] : 0;
+    if ($avg > $best_par_avg) { $best_par_avg = $avg; $best_par_name = $p; }
 }
 
-// Calcular promedios
-foreach ($stats_por_quiz as $titulo => &$data) {
-    $data['promedio'] = round($data['suma_notas'] / $data['total'], 2);
-    $data['tasa_aprobacion'] = round(($data['aprobados'] / $data['total']) * 100, 1);
+// Mejor Genero
+$best_gen_name = 'N/A';
+$best_gen_avg = -1;
+foreach ($stats_genero as $g => $d) {
+    $avg = $d['count'] > 0 ? $d['sum'] / $d['count'] : 0;
+    if ($avg > $best_gen_avg) { $best_gen_avg = $avg; $best_gen_name = $g; }
 }
-unset($data);
 
+// Mejor Jornada
+$best_shift_name = 'N/A';
+$best_shift_avg = -1;
+foreach ($stats_jornada as $j => $d) {
+    $avg = ($d['count'] ?? 0) > 0 ? $d['sum'] / $d['count'] : 0;
+    if ($avg > $best_shift_avg) { $best_shift_avg = $avg; $best_shift_name = $j; }
+}
+
+// Variables listas para inyectar en HTML:
+// $conteo_aprobadas_2, $conteo_aprobadas_3
+// $best_par_name, $best_par_avg
+// $best_gen_name, $best_gen_avg
+// $best_shift_name, $best_shift_avg
+// $stats_por_quiz_unified (JSON)
+// $data_chart_mat_par_final (JSON)
 // 8. PENDIENTES
 $pendientes = [];
 if ($quiz_id) {
@@ -920,7 +1079,7 @@ function getScoreBadge($nota) {
     </div>
 
     <!-- Analytics Section MOVED TO TOP -->
-    <?php if (!empty($stats_por_quiz)): ?>
+    <?php if (!empty($stats_por_quiz_unified)): ?>
     <div class="mb-5">
         <h5 class="fw-bold mb-4">
             <i class="fas fa-chart-pie me-2" style="color: #667eea;"></i>
@@ -1109,11 +1268,54 @@ function getScoreBadge($nota) {
                 <div class="card-custom p-4">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                          <h6 class="fw-bold mb-0 text-dark">
-                            <i class="fas fa-layer-group me-2 text-primary"></i>Rendimiento por Asignatura y Paralelo
+                            <i class="fas fa-layer-group me-2 text-primary"></i>Rendimiento por Asignatura y Paralelo (Unificado)
                         </h6>
                     </div>
                     <div style="height: 400px;">
                         <canvas id="chartMateriaParalelo"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 6: CONCLUSIONES DEL ANÁLISIS (New) -->
+        <div class="row mt-4 mb-4">
+            <div class="col-12">
+                <div class="card-custom p-4 border-start border-4 border-info">
+                    <h5 class="fw-bold mb-3 text-dark">
+                        <i class="fas fa-lightbulb me-2 text-warning"></i>Conclusiones del Análisis
+                    </h5>
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <div class="p-3 bg-light rounded shadow-sm text-center">
+                                <small class="text-muted d-block mb-1">Aprobados 2+ Materias</small>
+                                <h3 class="fw-bold text-success mb-0"><?= $conteo_aprobadas_2 ?></h3>
+                                <small class="text-muted">estudiantes</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="p-3 bg-light rounded shadow-sm text-center">
+                                <small class="text-muted d-block mb-1">Aprobados 3+ Materias</small>
+                                <h3 class="fw-bold text-primary mb-0"><?= $conteo_aprobadas_3 ?></h3>
+                                <small class="text-muted">estudiantes</small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <ul class="list-group list-group-flush">
+                                <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
+                                    <span><i class="fas fa-venus-mars me-2 text-secondary"></i>Mejor Rendimiento (Género)</span>
+                                    <span class="badge bg-purple text-dark fw-bold"><?= $best_gen_name ?> (Avg: <?= round($best_gen_avg, 2) ?>)</span>
+                                </li>
+                                <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
+                                    <span><i class="fas fa-users me-2 text-secondary"></i>Paralelo Destacado</span>
+                                    <span class="badge bg-info text-dark fw-bold"><?= $best_par_name ?> (Avg: <?= round($best_par_avg, 2) ?>)</span>
+                                </li>
+                                <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
+                                    <span><i class="fas fa-sun me-2 text-secondary"></i>Jornada Destacada</span>
+                                    <span class="badge bg-warning text-dark fw-bold"><?= $best_shift_name ?> (Avg: <?= round($best_shift_avg, 2) ?>)</span>
+                                </li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1536,7 +1738,7 @@ document.addEventListener('change', function(e) {
 // ============================================
 // GRÁFICOS CON CHART.JS
 // ============================================
-<?php if (!empty($stats_por_quiz)): ?>
+<?php if (!empty($stats_por_quiz_unified)): ?>
 document.addEventListener('DOMContentLoaded', function() {
     // Datos desde PHP
     
@@ -1546,9 +1748,15 @@ document.addEventListener('DOMContentLoaded', function() {
         if (edadInput && edadInput.value === '14' && '<?= $edad ?>' === '') {
             edadInput.value = '';
         }
+        // QA Toast
+        <?php if ($qa_msg): ?>
+        if(window.showToast) window.showToast('<?= addslashes($qa_msg) ?>', 'info');
+        <?php endif; ?>
     });
 
-    const statsData = <?= json_encode($stats_por_quiz) ?>;
+    // --- DATA UNIFICATION LOGIC (MOVED TO PHP) ---
+    // Now we just consume the server-side unified data directly
+    const statsData = <?= json_encode($stats_por_quiz_unified) ?>;
     const timelineData = <?= json_encode($timeline_data ?? []) ?>;
     const distNotas = <?= json_encode($dist_notas ?? []) ?>;
     const distGenero = <?= json_encode($dist_genero ?? []) ?>;
@@ -1981,7 +2189,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // 8. NUEVO CHART: Materia vs Paralelo
     if(document.getElementById('chartMateriaParalelo')) {
         const paralelosLabels = <?= json_encode($paralelos_lista) ?>;
-        const rawData = <?= json_encode($data_chart_mat_par) ?>;
+        // Use PHP Unified Data directly
+        const rawData = <?= json_encode($data_chart_mat_par_final) ?>;
         
         // Generar datasets dinámicos
         const datasets = [];
@@ -2209,6 +2418,26 @@ document.addEventListener('DOMContentLoaded', function() {
                 id: 'nota_min',
                 triggers: [/(?:mayor(?:es)?|sobre|m[áa]s|arriba|superior(?:es)?|>)\s*(?:a|que|de)?\s*(\d+)/i],
                 action: (form, match) => setVal(form, 'input[name="min_nota"]', match[1])
+            },
+            
+            // --- 8. QA: CONTAR APROBADOS (X MATERIAS) ---
+            {
+                id: 'qa_approved_count',
+                triggers: [/(?:cuantos|numero de|cantidad de)\s*(?:estudiantes|alumnos).*(?:aprobaron|pasaron)\s*(\d+)\s*materias/i],
+                action: (form, match) => {
+                    const num = match[1];
+                    // Inject hidden fields for QA mode
+                    const iType = document.createElement('input'); iType.type='hidden'; iType.name='q_type'; iType.value='count_approved';
+                    const iVal = document.createElement('input'); iVal.type='hidden'; iVal.name='q_val'; iVal.value=num;
+                    form.appendChild(iType);
+                    form.appendChild(iVal);
+                    // Clear other filters to ensure global scan? 
+                    // Actually, keeping filters might be cool ("How many females passed 2 subjects?"). 
+                    // My PHP implementation uses a fresh "SELECT ALL" query for this QA, ignoring filters.
+                    // If we want to respect filters, we strictly need to modify the PHP QA block.
+                    // The PHP block currently does: $sql_all = "SELECT ..."; (No filters applied).
+                    // So it is Global Count.
+                }
             }
         ];
 
