@@ -434,8 +434,8 @@ $conteo_aprobadas_3 = 0;
 $data_chart_mat_par_unified = []; // Estructura: [Materia][Paralelo] = Promedio
 
 foreach ($estudiantes_calcs as $uid => $data) {
-    $par = $data['meta']['paralelo'];
-    $gen = $data['meta']['genero'];
+    $par = strtoupper(!empty($data['meta']['paralelo']) ? $data['meta']['paralelo'] : 'SIN PARALELO');
+    $gen = !empty($data['meta']['genero']) ? ucfirst(strtolower($data['meta']['genero'])) : 'No especificado';
     
     // Determinar jornada
     $jornada = (preg_match('/^[A-E]$/', $par)) ? 'Matutina' : 'Vespertina';
@@ -527,6 +527,9 @@ foreach ($data_chart_mat_par_unified as $mat => $par_data) {
 $best_par_name = 'N/A';
 $best_par_avg = -1;
 foreach ($stats_paralelos as $p => $d) {
+    // Filtrar Solo Paralelos Validos (A-H)
+    if (!preg_match('/^[A-H]$/', $p)) continue;
+    
     $avg = $d['count'] > 0 ? $d['sum'] / $d['count'] : 0;
     if ($avg > $best_par_avg) { $best_par_avg = $avg; $best_par_name = $p; }
 }
@@ -535,6 +538,9 @@ foreach ($stats_paralelos as $p => $d) {
 $best_gen_name = 'N/A';
 $best_gen_avg = -1;
 foreach ($stats_genero as $g => $d) {
+    // Filtrar Solo Generos Validos (Masculino, Femenino)
+    if (!in_array($g, ['Masculino', 'Femenino'])) continue;
+
     $avg = $d['count'] > 0 ? $d['sum'] / $d['count'] : 0;
     if ($avg > $best_gen_avg) { $best_gen_avg = $avg; $best_gen_name = $g; }
 }
@@ -545,6 +551,14 @@ $best_shift_avg = -1;
 foreach ($stats_jornada as $j => $d) {
     $avg = ($d['count'] ?? 0) > 0 ? $d['sum'] / $d['count'] : 0;
     if ($avg > $best_shift_avg) { $best_shift_avg = $avg; $best_shift_name = $j; }
+}
+
+// Mejor Materia (Area)
+$best_area_name = 'N/A';
+$best_area_avg = -1;
+foreach ($stats_materias_global as $m => $d) {
+    $avg = ($d['count'] ?? 0) > 0 ? $d['sum'] / $d['count'] : 0;
+    if ($avg > $best_area_avg) { $best_area_avg = $avg; $best_area_name = $m; }
 }
 
 // Variables listas para inyectar en HTML:
@@ -1304,7 +1318,7 @@ function getScoreBadge($nota) {
                             <ul class="list-group list-group-flush">
                                 <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
                                     <span><i class="fas fa-venus-mars me-2 text-secondary"></i>Mejor Rendimiento (Género)</span>
-                                    <span class="badge bg-purple text-dark fw-bold"><?= $best_gen_name ?> (Avg: <?= round($best_gen_avg, 2) ?>)</span>
+                                    <span class="badge bg-purple text-dark fw-bold"><?= ($best_gen_name !== '' && $best_gen_name !== 'N/A') ? $best_gen_name : 'No Definido' ?> (Avg: <?= round($best_gen_avg, 2) ?>)</span>
                                 </li>
                                 <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
                                     <span><i class="fas fa-users me-2 text-secondary"></i>Paralelo Destacado</span>
@@ -1314,8 +1328,28 @@ function getScoreBadge($nota) {
                                     <span><i class="fas fa-sun me-2 text-secondary"></i>Jornada Destacada</span>
                                     <span class="badge bg-warning text-dark fw-bold"><?= $best_shift_name ?> (Avg: <?= round($best_shift_avg, 2) ?>)</span>
                                 </li>
+                                <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
+                                    <span><i class="fas fa-book me-2 text-secondary"></i>Mejor Asignatura</span>
+                                    <span class="badge bg-success text-white fw-bold"><?= $best_area_name ?> (Avg: <?= round($best_area_avg, 2) ?>)</span>
+                                </li>
                             </ul>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 7: Shift Performance (Jornada) -->
+        <div class="row mt-4 mb-4">
+            <div class="col-md-6 offset-md-3">
+                <div class="card-custom p-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                         <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-cloud-sun me-2 text-warning"></i>Rendimiento por Jornada
+                        </h6>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="chartJornada"></canvas>
                     </div>
                 </div>
             </div>
@@ -2262,6 +2296,50 @@ document.addEventListener('DOMContentLoaded', function() {
                         title: { display: true, text: 'Paralelos' },
                         grid: { display: false }
                     }
+                }
+            }
+        });
+    }
+
+    // 9. NUEVO CHART: Jornada (Shift) - CORRECTLY RE-INSERTED
+    if(document.getElementById('chartJornada')) {
+        const statsJornada = <?= json_encode($stats_jornada) ?>;
+        // statsJornada is {Matutina: {sum, count}, Vespertina: {sum, count}}
+        const labels = Object.keys(statsJornada);
+        const dataAvg = labels.map(l => {
+            const d = statsJornada[l];
+            return d.count > 0 ? (d.sum / d.count).toFixed(2) : 0;
+        });
+
+        new Chart(document.getElementById('chartJornada'), {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Promedio General',
+                    data: dataAvg,
+                    backgroundColor: [colors.warning, colors.purple],
+                    borderRadius: 8,
+                    barPercentage: 0.5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    datalabels: {
+                        display: true,
+                        anchor: 'end',
+                        align: 'top',
+                        formatter: (val) => val + '/100',
+                        color: colors.primary,
+                        font: { weight: 'bold', size: 12 }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: true, max: 100 },
+                    x: { grid: { display: false } }
                 }
             }
         });
