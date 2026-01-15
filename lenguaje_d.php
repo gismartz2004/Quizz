@@ -113,13 +113,15 @@ if ($filtro_muestra === 'si') {
     $sql .= " AND COALESCE(r.es_muestra, FALSE) = FALSE";
 }
 // Filtros de notas (requiere cálculo en DB o filtro posterior, idealmente DB)
-// Dado que la nota es calculada, usaremos la fórmula en el WHERE
+// Dado que la nota es calculada, usaremos la fórmula en el WHERE con el CASE dinámico
+$max_score_expr = "(CASE WHEN q.titulo ILIKE '%Preguntas Abiertas%' THEN 20.0 ELSE 250.0 END)";
+
 if ($min_nota !== '') {
-    $sql .= " AND ((r.puntos_obtenidos / 250.0) * 100) >= :min_nota";
+    $sql .= " AND ((r.puntos_obtenidos / $max_score_expr) * 100) >= :min_nota";
     $params['min_nota'] = $min_nota;
 }
 if ($max_nota !== '') {
-    $sql .= " AND ((r.puntos_obtenidos / 250.0) * 100) <= :max_nota";
+    $sql .= " AND ((r.puntos_obtenidos / $max_score_expr) * 100) <= :max_nota";
     $params['max_nota'] = $max_nota;
 }
 
@@ -145,39 +147,61 @@ try {
 try {
     // Re-usar la cláusula WHERE de la consulta principal (ya capturada en $where_chunk antes del ORDER BY)
 
-    // Total Examenes
-    $stmt_tot = $pdo->prepare("SELECT COUNT(*) FROM resultados r WHERE 1=1" . $where_chunk);
+// SQL Helper for Max Score
+    $max_score_case = "(CASE WHEN q.titulo ILIKE '%Preguntas Abiertas%' THEN 20.0 ELSE 250.0 END)";
+
+    // Promedio General
+    $sql_avg = "SELECT AVG((r.puntos_obtenidos / $max_score_case) * 100) FROM resultados r 
+                JOIN quizzes q ON r.quiz_id = q.id 
+                WHERE 1=1" . $where_chunk; 
+    // Note: $where_chunk uses alias 'r' and 'u', but q needs to be joined if not already. 
+    // The original main query already joins quizzes q. 
+    // The previous $where_chunk extraction was from a query that JOINED q.
+    // However, the $sql_avg constructed here did NOT join q in the original code (it was just FROM resultados r).
+    // Accessing q.titulo requires JOINing quizzes q.
+    // Let's verify context: Line 48: JOIN quizzes q ON r.quiz_id = q.id.
+    // The $where_chunk starts with " AND..." so it safely appends conditions on r, u, q.
+    // BUT checking existing code: $sql_avg = "... FROM resultados r WHERE 1=1" . $where_chunk;
+    // Original code Line 154 did NOT join quizzes q. If $where_chunk contained 'q.titulo', it would fail.
+    // But filters are mostly on r (quiz_id, fecha, genero, edad, paralelo). 
+    // IF we use q.titulo in the select expression, we MUST join q.
+    
+    // REDEFINING QUERIES TO INCLUDE JOIN
+    $join_q = " JOIN quizzes q ON r.quiz_id = q.id ";
+
+    // Total Examenes (No change needed, but good to be safe)
+    $stmt_tot = $pdo->prepare("SELECT COUNT(*) FROM resultados r $join_q WHERE 1=1" . $where_chunk);
     $stmt_tot->execute($params);
     $total_examenes = $stmt_tot->fetchColumn();
 
     // Promedio General
-    $sql_avg = "SELECT AVG((r.puntos_obtenidos / 250.0) * 100) FROM resultados r WHERE 1=1" . $where_chunk;
+    $sql_avg = "SELECT AVG((r.puntos_obtenidos / $max_score_case) * 100) FROM resultados r $join_q WHERE 1=1" . $where_chunk;
     $stmt_avg = $pdo->prepare($sql_avg);
     $stmt_avg->execute($params);
     $promedio_general = round($stmt_avg->fetchColumn(), 2);
 
     // Tasa de Aprobación
-    $sql_aprobados = "SELECT COUNT(*) FROM resultados r WHERE ((r.puntos_obtenidos / 250.0) * 100) >= 70" . $where_chunk;
+    $sql_aprobados = "SELECT COUNT(*) FROM resultados r $join_q WHERE ((r.puntos_obtenidos / $max_score_case) * 100) >= 70" . $where_chunk;
     $stmt_aprob = $pdo->prepare($sql_aprobados);
     $stmt_aprob->execute($params);
     $aprobados_count = $stmt_aprob->fetchColumn();
     $tasa_aprobacion = $total_examenes > 0 ? round(($aprobados_count / $total_examenes) * 100, 1) : 0;
 
     // Incidentes de Seguridad
-    $sql_anomalias = "SELECT COUNT(*) FROM resultados r WHERE (r.intentos_tab_switch > 1 OR r.segundos_fuera > 15)" . $where_chunk;
+    $sql_anomalias = "SELECT COUNT(*) FROM resultados r $join_q WHERE (r.intentos_tab_switch > 1 OR r.segundos_fuera > 15)" . $where_chunk;
     $stmt_anom = $pdo->prepare($sql_anomalias);
     $stmt_anom->execute($params);
     $total_anomalias = $stmt_anom->fetchColumn();
 
     // --- PREDICCIONES ---
     // Riesgo de Deserción
-    $sql_risk = "SELECT COUNT(*) FROM resultados r WHERE ((r.puntos_obtenidos / 250.0) * 100) < 70 AND (r.intentos_tab_switch > 1 OR r.segundos_fuera > 15)" . $where_chunk;
+    $sql_risk = "SELECT COUNT(*) FROM resultados r $join_q WHERE ((r.puntos_obtenidos / $max_score_case) * 100) < 70 AND (r.intentos_tab_switch > 1 OR r.segundos_fuera > 15)" . $where_chunk;
     $stmt_risk = $pdo->prepare($sql_risk);
     $stmt_risk->execute($params);
     $risk_count = (int)$stmt_risk->fetchColumn();
 
     // Alta Probabilidad de Excelencia
-    $sql_success = "SELECT COUNT(*) FROM resultados r WHERE ((r.puntos_obtenidos / 250.0) * 100) >= 90 AND r.intentos_tab_switch = 0" . $where_chunk;
+    $sql_success = "SELECT COUNT(*) FROM resultados r $join_q WHERE ((r.puntos_obtenidos / $max_score_case) * 100) >= 90 AND r.intentos_tab_switch = 0" . $where_chunk;
     $stmt_success = $pdo->prepare($sql_success);
     $stmt_success->execute($params);
     $success_count = (int)$stmt_success->fetchColumn();
@@ -185,10 +209,8 @@ try {
     // --- DATA FOR NEW CHARTS ---
 
     // 1. Timeline (Exams per Day)
-    // Note: Adjusting date format for SQL group by based on typical DB (assuming PostgreSQL/MySQL, using generic approach if possible but here tailored to what seems like Postgres 'EXTRACT' or MySQL 'DATE')
-    // Since previous queries use 'EXTRACT(MONTH FROM ...)', it likely supports standard SQL or Postgres.
-    // Let's use string formatting for safety in PHP or simple date(fecha_realizacion)
-    $stmt_timeline = $pdo->prepare("SELECT DATE(fecha_realizacion) as fecha, COUNT(*) as count FROM resultados r WHERE 1=1 " . $where_chunk . " GROUP BY DATE(fecha_realizacion) ORDER BY fecha ASC");
+    // Note: Adjusting date format for SQL group by based on typical DB (assuming PostgreSQL/MySQL)
+    $stmt_timeline = $pdo->prepare("SELECT DATE(fecha_realizacion) as fecha, COUNT(*) as count FROM resultados r $join_q WHERE 1=1 " . $where_chunk . " GROUP BY DATE(fecha_realizacion) ORDER BY fecha ASC");
     $stmt_timeline->execute($params);
     $timeline_data = $stmt_timeline->fetchAll(PDO::FETCH_ASSOC);
 
@@ -225,7 +247,10 @@ foreach ($resultados_raw as $row) {
     if ($integridad && $integridad !== $nivel) continue;
 
     $puntos_obtenidos = (float)$row['puntos_obtenidos'];
-    $nota_calculada = (250 > 0) ? ($puntos_obtenidos / 250) * 100 : 0;
+    // Ajuste dinámico de nota máxima según el tipo de examen
+    $max_puntos = (stripos($row['quiz_titulo'], 'Preguntas Abiertas') !== false) ? 20 : 250;
+    
+    $nota_calculada = ($max_puntos > 0) ? ($puntos_obtenidos / $max_puntos) * 100 : 0;
     $nota_final = round($nota_calculada, 2);
     
     $row['nota_sobre_100'] = $nota_final;
@@ -270,7 +295,7 @@ $sql_global = "SELECT
                 q.titulo as quiz_titulo,
                 r.paralelo,
                 COUNT(*) as total,
-                SUM((r.puntos_obtenidos / 250.0) * 100) as suma_notas
+                SUM((r.puntos_obtenidos / (CASE WHEN q.titulo ILIKE '%Preguntas Abiertas%' THEN 20.0 ELSE 250.0 END)) * 100) as suma_notas
             FROM resultados r
             JOIN quizzes q ON r.quiz_id = q.id
             WHERE 1=1";
