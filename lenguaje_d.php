@@ -381,6 +381,23 @@ if ($fecha_hasta) { $sql_raw_global .= " AND r.fecha_realizacion <= :rd_hasta"; 
 if ($genero) { $sql_raw_global .= " AND r.genero = :rd_genero"; $params_raw['rd_genero'] = $genero; }
 if ($edad) { $sql_raw_global .= " AND r.edad = :rd_edad"; $params_raw['rd_edad'] = $edad; }
 
+// APLICAR FILTRO DE QUIZ TAMBIEN AQUI (Solicitud Usuario)
+if ($quiz_id) {
+    // Reutilizar lógica de merged_quiz_ids si ya fue calculada arriba, o simple id
+    if (!empty($merged_quiz_ids)) {
+        $placeholders_g = [];
+        foreach ($merged_quiz_ids as $idx => $qid) {
+            $key = "rd_mq_$idx";
+            $placeholders_g[] = ":$key";
+            $params_raw[$key] = $qid;
+        }
+        $sql_raw_global .= " AND r.quiz_id IN (" . implode(',', $placeholders_g) . ")";
+    } else {
+        $sql_raw_global .= " AND r.quiz_id = :rd_quiz_id";
+        $params_raw['rd_quiz_id'] = $quiz_id;
+    }
+}
+
 try {
     $stmt_rg = $pdo->prepare($sql_raw_global);
     $stmt_rg->execute($params_raw);
@@ -561,11 +578,63 @@ foreach ($stats_materias_global as $m => $d) {
     if ($avg > $best_area_avg) { $best_area_avg = $avg; $best_area_name = $m; }
 }
 
-// Variables listas para inyectar en HTML:
-// $conteo_aprobadas_2, $conteo_aprobadas_3
 // $best_par_name, $best_par_avg
 // $best_gen_name, $best_gen_avg
 // $best_shift_name, $best_shift_avg
+// $stats_por_quiz_unified (JSON)
+// $data_chart_mat_par_final (JSON)
+
+// --- NUEVO: CÁLCULOS DE TASA DE APROBACIÓN POR ESTUDIANTE (FILTRO A-H) ---
+$total_valid_students = 0;
+$students_approved_global = 0;
+$total_valid_students = 0;
+$students_approved_global = 0;
+// SOLO MOSTRAR DESDE 1 EN ADELANTE (Pedido usuario: sacar el 0)
+$distribucion_aprobadas = ['1'=>0, '2'=>0, '3'=>0, '4+'=>0];
+
+foreach ($estudiantes_calcs as $uid => $data) {
+    $par = strtoupper(!empty($data['meta']['paralelo']) ? $data['meta']['paralelo'] : 'SIN PARALELO');
+    // Filtro estricto: Solo A-H para métricas globales de estudiantes
+    if (!preg_match('/^[A-H]$/', $par)) continue;
+
+    $total_valid_students++;
+
+    // 1. Calcular Promedio Global del Estudiante
+    $sum_scores = 0;
+    $count_subs = 0;
+    $approved_subs_count = 0;
+
+    foreach ($data['materias'] as $m => $comps) {
+        $sc = 0;
+        if ($m === 'Lengua y Literatura') {
+            $sc = ($comps['teoria']??0)*0.8 + ($comps['abierta']??0)*0.2;
+        } else {
+            $sc = $comps['nota_unica']??0;
+        }
+        $sum_scores += $sc;
+        $count_subs++;
+        if ($sc >= 70) $approved_subs_count++;
+    }
+
+    $global_avg_student = ($count_subs > 0) ? $sum_scores / $count_subs : 0;
+    if ($global_avg_student >= 70) {
+        $students_approved_global++;
+    }
+
+    // 2. Distribución de Materias Aprobadas
+    if ($approved_subs_count >= 4) {
+        $distribucion_aprobadas['4+']++;
+    } elseif ($approved_subs_count > 0) {
+        // Solo registrar si aprobó al menos 1
+        $distribucion_aprobadas[(string)$approved_subs_count]++;
+    }
+}
+
+// SOBRESCRIBIR TASA DE APROBACIÓN GLOBAL (Para el gráfico existente)
+$tasa_aprobacion = ($total_valid_students > 0) ? round(($students_approved_global / $total_valid_students) * 100, 1) : 0;
+// Actualizar contador para el label
+$aprobados_count = $students_approved_global;
+$total_examenes = $total_valid_students; // Hack visual: el label dirá "X de Y" (donde Y es estudiantes)
 // $stats_por_quiz_unified (JSON)
 // $data_chart_mat_par_final (JSON)
 // 8. PENDIENTES
@@ -1087,6 +1156,9 @@ function getScoreBadge($nota) {
             </div>
             <div class="col-md-3 d-flex align-items-end gap-2">
                 <button type="submit" class="btn btn-primary btn-sm flex-grow-1">Filtrar</button>
+                <a href="exportar_excel.php?<?= http_build_query(array_merge($_GET, ['muestra' => 'si'])) ?>" target="_blank" class="btn btn-success btn-sm flex-grow-1">
+                    <i class="fas fa-file-csv me-1"></i>Exportar Muestra
+                </a>
                 <a href="?" class="btn btn-light btn-sm">Limpiar</a>
             </div>
         </form>
@@ -1300,18 +1372,12 @@ function getScoreBadge($nota) {
                         <i class="fas fa-lightbulb me-2 text-warning"></i>Conclusiones del Análisis
                     </h5>
                     <div class="row g-3">
-                        <div class="col-md-3">
-                            <div class="p-3 bg-light rounded shadow-sm text-center">
-                                <small class="text-muted d-block mb-1">Aprobados 2+ Materias</small>
-                                <h3 class="fw-bold text-success mb-0"><?= $conteo_aprobadas_2 ?></h3>
-                                <small class="text-muted">estudiantes</small>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="p-3 bg-light rounded shadow-sm text-center">
-                                <small class="text-muted d-block mb-1">Aprobados 3+ Materias</small>
-                                <h3 class="fw-bold text-primary mb-0"><?= $conteo_aprobadas_3 ?></h3>
-                                <small class="text-muted">estudiantes</small>
+                        <div class="col-md-6">
+                            <div class="card-custom p-3 border shadow-sm h-100">
+                                <h6 class="text-center small fw-bold text-muted mb-2">Materias Aprobadas por Estudiante</h6>
+                                <div style="height: 180px; position: relative;">
+                                    <canvas id="chartPastelAprobadas"></canvas>
+                                </div>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -1340,9 +1406,10 @@ function getScoreBadge($nota) {
         </div>
 
         <!-- Row 7: Shift Performance (Jornada) -->
+        <!-- Row 7: Shift Performance (Jornada) & Gender Performance (New) -->
         <div class="row mt-4 mb-4">
-            <div class="col-md-6 offset-md-3">
-                <div class="card-custom p-4">
+            <div class="col-md-6">
+                <div class="card-custom p-4 h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                          <h6 class="fw-bold mb-0 text-dark">
                             <i class="fas fa-cloud-sun me-2 text-warning"></i>Rendimiento por Jornada
@@ -1353,6 +1420,19 @@ function getScoreBadge($nota) {
                     </div>
                 </div>
             </div>
+            <div class="col-md-6">
+                <div class="card-custom p-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                         <h6 class="fw-bold mb-0 text-dark">
+                            <i class="fas fa-venus-mars me-2 text-purple"></i>Rendimiento por Género
+                        </h6>
+                    </div>
+                    <div style="height: 300px;">
+                        <canvas id="chartRendimientoGenero"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
         </div>
     </div>
     <?php endif; ?>
@@ -2316,7 +2396,7 @@ document.addEventListener('DOMContentLoaded', function() {
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Promedio General',
+                    label: 'Promedio Global',
                     data: dataAvg,
                     backgroundColor: [colors.warning, colors.purple],
                     borderRadius: 8,
@@ -2340,6 +2420,96 @@ document.addEventListener('DOMContentLoaded', function() {
                 scales: {
                     y: { beginAtZero: true, max: 100 },
                     x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+    // 10. NUEVO CHART: Rendimiento por Genero
+    if(document.getElementById('chartRendimientoGenero')) {
+        const statsGen = <?= json_encode($stats_genero) ?>; 
+        // statsGen structure: {Masculino: {sum, count}, ...}
+        // Filter keys to only allow Masculino/Femenino
+        const validKeys = Object.keys(statsGen).filter(k => k === 'Masculino' || k === 'Femenino');
+        
+        const dataAvgGen = validKeys.map(k => {
+            const d = statsGen[k];
+            return d.count > 0 ? (d.sum / d.count).toFixed(2) : 0;
+        });
+
+        new Chart(document.getElementById('chartRendimientoGenero'), {
+            type: 'bar',
+            data: {
+                labels: validKeys,
+                datasets: [{
+                    label: 'Promedio',
+                    data: dataAvgGen,
+                    backgroundColor: [colors.info, colors.danger], // Blue/Pinkish
+                    borderRadius: 8,
+                    barPercentage: 0.5
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    datalabels: {
+                        display: true,
+                        anchor: 'end',
+                        align: 'top',
+                        formatter: (val) => val + '/100',
+                        color: colors.primary,
+                        font: { weight: 'bold', size: 12 }
+                    }
+                },
+                scales: {
+                    y: { beginAtZero: true, max: 100 },
+                    x: { grid: { display: false } }
+                }
+            }
+        });
+    }
+
+
+
+    // 11. NUEVO CHART: Pastel Materias Aprobadas
+    if(document.getElementById('chartPastelAprobadas')) {
+        const distData = <?= json_encode($distribucion_aprobadas) ?>;
+        // keys: 0, 1, 2, 3, 4+
+        new Chart(document.getElementById('chartPastelAprobadas'), {
+            type: 'doughnut',
+            data: {
+                labels: Object.keys(distData).map(k => k + ' Materias'),
+                datasets: [{
+                    data: Object.values(distData),
+                    backgroundColor: [
+                        // '#e2e8f0', // 0 (REMOVED)
+                        '#f56565', // 1
+                        '#ed8936', // 2
+                        '#4299e1', // 3
+                        '#48bb78'  // 4+
+                    ],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 } } },
+                    datalabels: {
+                        color: '#fff',
+                        font: { weight: 'bold' },
+                        formatter: (val, ctx) => {
+                            if(val === 0) return '';
+                            let sum = 0;
+                            let dataArr = ctx.chart.data.datasets[0].data;
+                            dataArr.map(data => { sum += data; });
+                            let percentage = (val*100 / sum).toFixed(0)+"%";
+                            return percentage;
+                        }
+                    }
                 }
             }
         });
