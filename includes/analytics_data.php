@@ -116,12 +116,24 @@ function analyzeSkillsDiff($pdo, $quiz_id = null) {
                     WHEN ru.es_correcta_manual = TRUE THEN 1
                     WHEN ru.es_correcta_manual IS NULL AND o.es_correcta = TRUE THEN 1
                     ELSE 0 
-                END) as correctas
+                END) as correctas,
+                (COUNT(ru.id) - SUM(CASE 
+                    WHEN ru.es_correcta_manual = TRUE THEN 1
+                    WHEN ru.es_correcta_manual IS NULL AND o.es_correcta = TRUE THEN 1
+                    ELSE 0 
+                END)) as incorrectas,
+                STRING_AGG(CASE 
+                    WHEN (ru.es_correcta_manual = TRUE OR (ru.es_correcta_manual IS NULL AND o.es_correcta = TRUE)) THEN NULL 
+                    ELSE u.nombre 
+                END, ', ') as lista_errores
             FROM preguntas p
             LEFT JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id
             LEFT JOIN opciones o ON ru.opcion_id = o.id
+            LEFT JOIN resultados r ON ru.resultado_id = r.id
+            LEFT JOIN usuarios u ON r.usuario_id = u.id
             WHERE p.quiz_id = :qid
             GROUP BY p.id, p.texto
+            HAVING COUNT(ru.id) > 0
             ORDER BY (SUM(CASE 
                     WHEN ru.es_correcta_manual = TRUE THEN 1
                     WHEN ru.es_correcta_manual IS NULL AND o.es_correcta = TRUE THEN 1

@@ -218,7 +218,32 @@ require_once 'includes/analytics_data.php';
 // Calcular Estadísticas Avanzadas
 $sectionStats = calculateSectionStats($resultados);
 // Solo analizar destrezas si hay un quiz específico seleccionado y no es un grupo merged 
-$skillsStats = ($quiz_id && count($merged_quiz_ids) === 0) ? analyzeSkillsDiff($pdo, $quiz_id) : [];
+// --- 1. SKILLS ANALYSIS (DESTREZAS) ---
+// Default: Analyze selected quiz
+$target_quiz_id = $quiz_id;
+
+// Logic Swap for Merged Exams (Lengua y Literatura)
+// User Request: "Instead of showing Lengua, show Open Questions inside the standard Skills table"
+if ($quiz_id && count($merged_quiz_ids) > 0) {
+    // Find the 'Preguntas Abiertas' ID within the merged set
+    foreach ($merged_quiz_ids as $mqid) {
+        $stmt_t = $pdo->prepare("SELECT titulo FROM quizzes WHERE id = ?");
+        $stmt_t->execute([$mqid]);
+        $tit = $stmt_t->fetchColumn();
+        
+        if (stripos($tit, 'Preguntas Abiertas') !== false) {
+            $target_quiz_id = $mqid;
+            break; // Use this one
+        }
+    }
+}
+
+// Calculate Stats using the Target ID (either the single quiz, or the Open Questions one)
+// This populates the STANDARD table regardless of merged status
+$skillsStats = ($target_quiz_id) ? analyzeSkillsDiff($pdo, $target_quiz_id) : [];
+
+// We no longer need separate merged stats tables since we swapped the main one
+$mergedSkillsStats = [];
 
 // 5. OBTENER DATOS AGREGADOS Y PREDICCIONES (MÁS EFICIENTE)
 try {
@@ -1270,7 +1295,9 @@ function getScoreBadge($nota) {
                                 <th width="60">#</th>
                                 <th>Pregunta</th>
                                 <th class="text-center" width="150">Tasa de Aciertos</th>
+                                <th width="200">Estudiantes (Errores)</th>
                                 <th class="text-end" width="100">Intentos</th>
+                                <th class="text-end" width="100">Errores</th>
                                 <th class="text-end" width="100">Correctas</th>
                             </tr>
                         </thead>
@@ -1295,8 +1322,16 @@ function getScoreBadge($nota) {
                                 <td class="text-center align-middle">
                                     <span class="fw-bold <?= $textColor ?> fs-5"><?= number_format($rate, 1) ?>%</span>
                                 </td>
+                                <td class="align-middle">
+                                    <div style="max-height: 80px; overflow-y: auto; font-size: 0.75rem;" class="text-muted">
+                                        <?= !empty($skill['lista_errores']) ? str_replace(',', ', ', htmlspecialchars($skill['lista_errores'])) : '<span class="text-success fst-italic">Ninguno</span>' ?>
+                                    </div>
+                                </td>
                                 <td class="text-end align-middle">
                                     <span class="badge bg-light text-dark"><?= $skill['total_intentos'] ?></span>
+                                </td>
+                                <td class="text-end align-middle">
+                                    <span class="badge bg-danger-soft text-danger"><?= $skill['incorrectas'] ?? 0 ?></span>
                                 </td>
                                 <td class="text-end align-middle">
                                     <span class="badge bg-success-soft text-success"><?= $skill['correctas'] ?></span>
@@ -1317,27 +1352,101 @@ function getScoreBadge($nota) {
         </div>
     </div>
     <?php elseif ($quiz_id && count($merged_quiz_ids) > 1): ?>
-    <!-- Message when multiple quizzes are merged -->
-    <div class="row g-4 mb-4">
-        <div class="col-12">
-            <div class="card-custom p-4 bg-light border-info border-start border-4">
-                <div class="d-flex align-items-center gap-3">
-                    <div class="text-info" style="font-size: 2rem;">
-                        <i class="fas fa-info-circle"></i>
+        
+    <!-- MERGED QUIZZES SKILLS ANALYSIS (Lengua & Literatura Exception) -->
+    <?php foreach ($mergedSkillsStats as $mItem): ?>
+        <?php $mStats = $mItem['stats']; ?>
+        <?php if (!empty($mStats)): ?>
+        <div class="row g-4 mb-4">
+            <div class="col-12">
+                <div class="card-custom p-4 bg-white border-danger border-start border-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <h6 class="fw-bold mb-1 text-danger">
+                                <i class="fas fa-exclamation-triangle me-2"></i>Destrezas con Mayor Dificultad
+                            </h6>
+                            <p class="small text-muted mb-0">Examen: <strong><?= htmlspecialchars($mItem['titulo']) ?></strong></p>
+                        </div>
                     </div>
-                    <div>
-                        <h6 class="fw-bold mb-1 text-dark">
-                            <i class="fas fa-puzzle-piece me-2 text-info"></i>Análisis de Destrezas No Disponible
-                        </h6>
-                        <p class="small text-muted mb-0">
-                            El análisis de preguntas difíciles requiere seleccionar <strong>un solo examen específico</strong>. 
-                            Has seleccionado un examen compuesto que combina múltiples evaluaciones.
-                        </p>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-borderless mb-0">
+                            <thead>
+                                <tr class="text-secondary small text-uppercase">
+                                    <th width="60">#</th>
+                                    <th>Pregunta</th>
+                                    <th class="text-center" width="150">Tasa de Aciertos</th>
+                                    <th width="200">Estudiantes (Errores)</th>
+                                    <th class="text-end" width="100">Intentos</th>
+                                    <th class="text-end" width="100">Errores</th>
+                                    <th class="text-end" width="100">Correctas</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($mStats as $index => $skill): 
+                                    $rate = $skill['total_intentos'] > 0 ? ($skill['correctas'] / $skill['total_intentos']) * 100 : 0;
+                                    $barColor = $rate < 30 ? 'bg-danger' : ($rate < 50 ? 'bg-warning' : 'bg-info');
+                                    $textColor = $rate < 30 ? 'text-danger' : ($rate < 50 ? 'text-warning' : 'text-info');
+                                ?>
+                                <tr>
+                                    <td class="align-middle text-center">
+                                        <span class="badge bg-light text-dark fw-bold"><?= $index + 1 ?></span>
+                                    </td>
+                                    <td class="align-middle">
+                                        <div class="fw-medium text-dark mb-2" style="line-height: 1.4;">
+                                            <?= htmlspecialchars($skill['texto']) ?>
+                                        </div>
+                                        <div class="progress" style="height: 6px;">
+                                            <div class="progress-bar <?= $barColor ?>" role="progressbar" style="width: <?= $rate ?>%"></div>
+                                        </div>
+                                    </td>
+                                    <td class="text-center align-middle">
+                                        <span class="fw-bold <?= $textColor ?> fs-5"><?= number_format($rate, 1) ?>%</span>
+                                    </td>
+                                    <td class="align-middle">
+                                        <div style="max-height: 80px; overflow-y: auto; font-size: 0.75rem;" class="text-muted">
+                                            <?= !empty($skill['lista_errores']) ? str_replace(',', ', ', htmlspecialchars($skill['lista_errores'])) : '<span class="text-success fst-italic">Ninguno</span>' ?>
+                                        </div>
+                                    </td>
+                                    <td class="text-end align-middle">
+                                        <span class="badge bg-light text-dark"><?= $skill['total_intentos'] ?></span>
+                                    </td>
+                                    <td class="text-end align-middle">
+                                        <span class="badge bg-danger-soft text-danger"><?= $skill['incorrectas'] ?? 0 ?></span>
+                                    </td>
+                                    <td class="text-end align-middle">
+                                        <span class="badge bg-success-soft text-success"><?= $skill['correctas'] ?></span>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
+        <?php else: ?>
+        <!-- EMPTY STATE FOR MERGED EXAM -->
+        <div class="row g-4 mb-4">
+            <div class="col-12">
+                <div class="card-custom p-4 bg-light border-secondary border-start border-4">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="text-secondary" style="font-size: 2rem;">
+                            <i class="fas fa-inbox"></i>
+                        </div>
+                        <div>
+                            <h6 class="fw-bold mb-1 text-secondary">
+                                Sin Datos Suficientes
+                            </h6>
+                            <p class="small text-muted mb-0">Examen: <strong><?= htmlspecialchars($mItem['titulo']) ?></strong></p>
+                            <p class="small text-muted mb-0">No se encontraron preguntas con intentos registrados para este examen.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+    <?php endforeach; ?>
+
     <?php elseif (!$quiz_id): ?>
     <!-- Message when no quiz is selected -->
     <div class="row g-4 mb-4">
