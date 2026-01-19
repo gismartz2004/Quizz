@@ -1156,7 +1156,7 @@ function getScoreBadge($nota) {
                                 <thead class="table-light">
                                     <tr class="text-center">
                                         <th class="text-start">Paralelo</th>
-                                        <th>Total</th>
+                                        <th>Estud. (Únicos)</th>
                                         <th>Prom.</th>
                                         <th class="border-start text-primary"><i class="fas fa-mars"></i> Hombres</th>
                                         <th class="border-start text-danger"><i class="fas fa-venus"></i> Mujeres</th>
@@ -1166,25 +1166,27 @@ function getScoreBadge($nota) {
                                     <?php 
                                     ksort($sectionStats['Matutina']['paralelos']);
                                     foreach($sectionStats['Matutina']['paralelos'] as $par => $d): 
-                                        $avgH = $d['hombres'] > 0 ? number_format($d['sum_hombres']/$d['hombres'], 1) : '-';
-                                        $avgM = $d['mujeres'] > 0 ? number_format($d['sum_mujeres']/$d['mujeres'], 1) : '-';
+                                        // Averages based on EXAMS (scores / exams taken)
+                                        $avgH = $d['exams_hombres'] > 0 ? number_format($d['sum_hombres']/$d['exams_hombres'], 1) : '-';
+                                        $avgM = $d['exams_mujeres'] > 0 ? number_format($d['sum_mujeres']/$d['exams_mujeres'], 1) : '-';
+                                        $avgT = $d['total_exams'] > 0 ? number_format($d['sum_score']/$d['total_exams'], 1) : '-';
                                     ?>
                                     <tr class="text-center align-middle">
                                         <td class="text-start fw-bold bg-light text-dark"><?= $par ?></td>
-                                        <td class="fw-bold"><?= $d['total'] ?></td>
-                                        <td class="fw-bold text-dark"><?= number_format($d['sum']/$d['total'], 1) ?></td>
+                                        <td class="fw-bold"><?= $d['count_unique'] ?></td>
+                                        <td class="fw-bold text-dark"><?= $avgT ?></td>
                                         
                                         <td class="border-start bg-blue-50">
                                             <div class="d-flex justify-content-center gap-2">
-                                                <span class="badge bg-primary-soft text-primary small" title="Cantidad"><?= $d['hombres'] ?></span>
-                                                <span class="small fw-bold text-muted" title="Promedio"><?= $avgH ?></span>
+                                                <span class="badge bg-primary-soft text-primary small" title="Estudiantes Únicos"><?= $d['count_hombres'] ?></span>
+                                                <span class="small fw-bold text-muted" title="Promedio General"><?= $avgH ?></span>
                                             </div>
                                         </td>
                                         
                                         <td class="border-start bg-red-50">
                                             <div class="d-flex justify-content-center gap-2">
-                                                <span class="badge bg-danger-soft text-danger small" title="Cantidad"><?= $d['mujeres'] ?></span>
-                                                <span class="small fw-bold text-muted" title="Promedio"><?= $avgM ?></span>
+                                                <span class="badge bg-danger-soft text-danger small" title="Estudiantes Únicas"><?= $d['count_mujeres'] ?></span>
+                                                <span class="small fw-bold text-muted" title="Promedio General"><?= $avgM ?></span>
                                             </div>
                                         </td>
                                     </tr>
@@ -1201,7 +1203,7 @@ function getScoreBadge($nota) {
                                 <thead class="table-light">
                                     <tr class="text-center">
                                         <th class="text-start">Paralelo</th>
-                                        <th>Total</th>
+                                        <th>Estud. (Únicos)</th>
                                         <th>Prom.</th>
                                         <th class="border-start text-primary"><i class="fas fa-mars"></i> Hombres</th>
                                         <th class="border-start text-danger"><i class="fas fa-venus"></i> Mujeres</th>
@@ -1211,25 +1213,27 @@ function getScoreBadge($nota) {
                                     <?php 
                                     ksort($sectionStats['Vespertina']['paralelos']);
                                     foreach($sectionStats['Vespertina']['paralelos'] as $par => $d): 
-                                        $avgH = $d['hombres'] > 0 ? number_format($d['sum_hombres']/$d['hombres'], 1) : '-';
-                                        $avgM = $d['mujeres'] > 0 ? number_format($d['sum_mujeres']/$d['mujeres'], 1) : '-';
+                                        // Averages based on EXAMS (scores / exams taken)
+                                        $avgH = $d['exams_hombres'] > 0 ? number_format($d['sum_hombres']/$d['exams_hombres'], 1) : '-';
+                                        $avgM = $d['exams_mujeres'] > 0 ? number_format($d['sum_mujeres']/$d['exams_mujeres'], 1) : '-';
+                                        $avgT = $d['total_exams'] > 0 ? number_format($d['sum_score']/$d['total_exams'], 1) : '-';
                                     ?>
                                     <tr class="text-center align-middle">
                                         <td class="text-start fw-bold bg-light text-dark"><?= $par ?></td>
-                                        <td class="fw-bold"><?= $d['total'] ?></td>
-                                        <td class="fw-bold text-dark"><?= number_format($d['sum']/$d['total'], 1) ?></td>
+                                        <td class="fw-bold"><?= $d['count_unique'] ?></td>
+                                        <td class="fw-bold text-dark"><?= $avgT ?></td>
                                         
                                         <td class="border-start bg-blue-50">
                                             <div class="d-flex justify-content-center gap-2">
-                                                <span class="badge bg-primary-soft text-primary small" title="Cantidad"><?= $d['hombres'] ?></span>
-                                                <span class="small fw-bold text-muted" title="Promedio"><?= $avgH ?></span>
+                                                <span class="badge bg-primary-soft text-primary small" title="Estudiantes Únicos"><?= $d['count_hombres'] ?></span>
+                                                <span class="small fw-bold text-muted" title="Promedio General"><?= $avgH ?></span>
                                             </div>
                                         </td>
                                         
                                         <td class="border-start bg-red-50">
                                             <div class="d-flex justify-content-center gap-2">
-                                                <span class="badge bg-danger-soft text-danger small" title="Cantidad"><?= $d['mujeres'] ?></span>
-                                                <span class="small fw-bold text-muted" title="Promedio"><?= $avgM ?></span>
+                                                <span class="badge bg-danger-soft text-danger small" title="Estudiantes Únicas"><?= $d['count_mujeres'] ?></span>
+                                                <span class="small fw-bold text-muted" title="Promedio General"><?= $avgM ?></span>
                                             </div>
                                         </td>
                                     </tr>

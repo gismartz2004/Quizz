@@ -107,29 +107,26 @@ try {
     // 3. GENERAR CSV
     $mode = filter_input(INPUT_GET, 'mode'); // 'full' for detailed data
     
-    // Increase memory and time limit for large exports
-    ini_set('memory_limit', '512M');
-    set_time_limit(300);
+    // Disable limits for massive exports
+    ini_set('memory_limit', '-1');
+    set_time_limit(0);
+    ini_set('zlib.output_compression', 'Off'); // Disable compression for streaming
 
-    // Prepare headers first to start outputting immediately if possible
+    // Clean any existing output buffer to prevent corrupted files
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+
     header('Content-Type: text/csv; charset=utf-8');
-    $prefix = ($filtro_muestra === 'si') ? 'muestra_' : (($mode === 'full') ? 'detalle_completo_' : 'reporte_');
+    $prefix = ($filtro_muestra === 'si') ? 'muestra_' : (($mode === 'full') ? 'bd_completa_' : 'reporte_');
     header('Content-Disposition: attachment; filename=' . $prefix . 'resultados_' . date('Y-m-d_H-i') . '.csv');
 
     $output = fopen('php://output', 'w');
     fputs($output, "\xEF\xBB\xBF"); // BOM
 
-    // Execute Main Query
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    if (empty($resultados)) {
-        fputcsv($output, ['No se encontraron resultados con los filtros seleccionados.']);
-        fclose($output);
-        exit;
-    }
-
+    // ... Headers code ...
+    // (We will regenerate headers part to be safe, but mostly the fix is in processBatch and buffering)
+    
     // Basic Headers
     $headers = [
         'ID Resultado', 'Estudiante', 'Email', 'Examen', 'Fecha', 
@@ -138,62 +135,100 @@ try {
     ];
 
     $questionMap = [];
-    $allAnswers = []; 
-
-    // If Full Mode: Optimization technique
+    
+    // BUILD DYNAMIC HEADERS (Full Mode)
     if ($mode === 'full') {
-        $rids = array_column($resultados, 'id');
-        
-        // Chunking the IDs to avoid massive IN clauses that break limits
-        $chunks = array_chunk($rids, 1000);
-        
-        // First pass: Identify ALL unique questions across this entire result set
-        // We do this to ensure consistent columns even if some chunks have different questions
-        foreach ($chunks as $chunk) {
-            $inQuery = implode(',', array_map('intval', $chunk));
-            $sqlQ = "SELECT DISTINCT p.id, p.texto 
-                     FROM preguntas p 
-                     JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id 
-                     WHERE ru.resultado_id IN ($inQuery)";
-            $stmtQ = $pdo->query($sqlQ);
+        try {
+            // Get ALL questions to ensure column consistency
+            $stmtQ = $pdo->query("SELECT id, texto FROM preguntas ORDER BY id ASC");
             while ($q = $stmtQ->fetch(PDO::FETCH_ASSOC)) {
                 $questionMap[$q['id']] = $q['texto'];
+                $headers[] = "P" . $q['id'] . ": " . substr(strip_tags($q['texto']), 0, 50);
             }
-        }
-        
-        // Sort questions by ID to keep columns consistent
-        ksort($questionMap);
-
-        // Add Question Headers
-        foreach ($questionMap as $qId => $qText) {
-            $headers[] = "P" . $qId . ": " . substr(strip_tags($qText), 0, 50);
-        }
-        
-        // Pre-fetch ALL answers for these results in one go (or chunks) to avoid N+1 query loop
-        // We'll store them in memory: [resultado_id][pregunta_id] = text
-        foreach ($chunks as $chunk) {
-            $inQuery = implode(',', array_map('intval', $chunk));
-            $sqlAns = "SELECT ru.resultado_id, ru.pregunta_id, o.texto as respuesta_texto, ru.observacion_docente 
-                       FROM respuestas_usuarios ru 
-                       LEFT JOIN opciones o ON ru.opcion_id = o.id
-                       WHERE ru.resultado_id IN ($inQuery)";
-            $stmtAns = $pdo->query($sqlAns);
-            
-            while ($ans = $stmtAns->fetch(PDO::FETCH_ASSOC)) {
-                $rid = $ans['resultado_id'];
-                $qid = $ans['pregunta_id'];
-                // Use option text or whatever fallback
-                $txt = $ans['respuesta_texto'];
-                $allAnswers[$rid][$qid] = $txt;
-            }
+        } catch (Exception $e) {
+            // If checking questions fails, we proceed without dynamic columns
         }
     }
 
-    // Output Headers
     fputcsv($output, $headers);
+    flush(); // Send headers immediately
 
-    // Output Rows
-    foreach ($resultados as $row) {
+    // EXECUTE MAIN QUERY
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    // BATCH PROCESSING
+    $batchSize = 200; 
+    $batchRows = [];
+
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $batchRows[] = $row;
+
+        if (count($batchRows) >= $batchSize) {
+            processBatch($pdo, $output, $batchRows, $mode, $questionMap);
+            $batchRows = []; 
+            if (ob_get_level() > 0) ob_flush();
+            flush(); 
+        }
+    }
+
+    if (count($batchRows) > 0) {
+        processBatch($pdo, $output, $batchRows, $mode, $questionMap);
+        flush();
+    }
+    
+    fclose($output);
+
+} catch (PDOException $e) {
+    die("Error generando reporte: " . $e->getMessage());
+}
+
+// Helper function to process a batch of results
+function processBatch($pdo, $output, $rows, $mode, $questionMap) {
+    // 1. If Full Mode, fetch ALL answers for this batch in ONE query
+    $batchAnswers = [];
+    if ($mode === 'full' && !empty($rows)) {
+        $ids = array_column($rows, 'id');
+        $inQuery = implode(',', array_map('intval', $ids));
+        
+        // FIXED COLUMN NAME: p.valor instead of p.puntos
+        $sqlAns = "SELECT ru.resultado_id, ru.pregunta_id, o.texto as respuesta_texto,
+                          ru.es_correcta_manual, o.es_correcta, p.valor as puntos_pregunta
+                   FROM respuestas_usuarios ru 
+                   LEFT JOIN opciones o ON ru.opcion_id = o.id
+                   LEFT JOIN preguntas p ON ru.pregunta_id = p.id
+                   WHERE ru.resultado_id IN ($inQuery)";
+        
+        try {
+            $stmtAns = $pdo->query($sqlAns);
+            while ($ans = $stmtAns->fetch(PDO::FETCH_ASSOC)) {
+                
+                $is_c_manual = $ans['es_correcta_manual'];
+                $is_c_auto   = $ans['es_correcta'];
+                
+                // Postgres/MySQL boolean standardization
+                $is_c_auto_bool = ($is_c_auto === true || $is_c_auto === 't' || $is_c_auto == 1);
+                
+                if ($is_c_manual !== null) {
+                    $final_correct = ($is_c_manual === true || $is_c_manual === 't' || $is_c_manual == 1);
+                } else {
+                    $final_correct = $is_c_auto_bool;
+                }
+
+                $points = $final_correct ? floatval($ans['puntos_pregunta']) : 0;
+                $text = trim($ans['respuesta_texto'] ?? '');
+                
+                // Format: "Answer [Pts: 2.5]"
+                $batchAnswers[$ans['resultado_id']][$ans['pregunta_id']] = $text . " [Pts: $points]";
+            }
+        } catch (Exception $e) {
+            // Only capture errors if strictly necessary, otherwise let empty strings fill gaps
+            // error_log("Error in batch export: " . $e->getMessage());
+        }
+    }
+
+    // 2. Iterate and write CSV lines
+    foreach ($rows as $row) {
         $puntos = (float)$row['puntos_obtenidos'];
         $max_puntos = (stripos($row['quiz_titulo'], 'Preguntas Abiertas') !== false) ? 20 : 250;
         $nota_final = ($max_puntos > 0) ? round(($puntos / $max_puntos) * 100, 2) : 0;
@@ -212,22 +247,16 @@ try {
             $puntos, $max_puntos, $nota_final, $nivel, $swaps, $time
         ];
 
-        // Append Answers if Full Mode using the in-memory array
+        // Append Answers
         if ($mode === 'full') {
             $rId = $row['id'];
             foreach ($questionMap as $qId => $qText) {
-                // Check if student answered this question
-                $ansText = $allAnswers[$rId][$qId] ?? '';
+                $ansText = $batchAnswers[$rId][$qId] ?? 'N/R'; 
                 $csvRow[] = $ansText;
             }
         }
 
         fputcsv($output, $csvRow);
     }
-    
-    fclose($output);
-
-} catch (PDOException $e) {
-    die("Error generando reporte: " . $e->getMessage());
 }
 ?>

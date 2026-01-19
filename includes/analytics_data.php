@@ -11,12 +11,16 @@ function calculateSectionStats($results) {
     $stats = [
         'Matutina' => [
             'total' => 0, 'aprobados' => 0, 'sum_notas' => 0, 
-            'genero' => ['Masculino' => 0, 'Femenino' => 0],
+            'unique_users' => [], // Set of user IDs
+            'genero' => ['Masculino' => 0, 'Femenino' => 0], // Unique counts
+            'genero_users' => ['Masculino' => [], 'Femenino' => []], // Sets
             'paralelos' => []
         ],
         'Vespertina' => [
             'total' => 0, 'aprobados' => 0, 'sum_notas' => 0, 
+            'unique_users' => [],
             'genero' => ['Masculino' => 0, 'Femenino' => 0],
+            'genero_users' => ['Masculino' => [], 'Femenino' => []],
             'paralelos' => []
         ]
     ];
@@ -28,36 +32,72 @@ function calculateSectionStats($results) {
         $max = (stripos($row['quiz_titulo'], 'Preguntas Abiertas') !== false) ? 20 : 250;
         $score = ($max > 0) ? ($nota / $max) * 100 : 0;
         $genero = ucfirst($row['genero'] ?? 'Otro');
+        $uid = $row['usuario_id'] ?? uniqid(); // Fallback if no ID
 
         if (isset($stats[$jornada])) {
-            $stats[$jornada]['total']++;
+            $stats[$jornada]['total']++; // Total exams
             $stats[$jornada]['sum_notas'] += $score;
-            if ($score >= 70) $stats[$jornada]['aprobados']++;
+            if ($score >= 70) $stats[$jornada]['aprobados']++; // Approved exams
             
-            if (isset($stats[$jornada]['genero'][$genero])) {
-                $stats[$jornada]['genero'][$genero]++;
+            // Unique Global Students
+            $stats[$jornada]['unique_users'][$uid] = true;
+
+            // Unique Gender Global
+            if (isset($stats[$jornada]['genero_users'][$genero])) {
+                $stats[$jornada]['genero_users'][$genero][$uid] = true;
             }
 
+            // Parallel Stats
             if (!isset($stats[$jornada]['paralelos'][$paralelo])) {
                 $stats[$jornada]['paralelos'][$paralelo] = [
-                    'total' => 0, 'sum' => 0, 
-                    'hombres' => 0, 'sum_hombres' => 0,
-                    'mujeres' => 0, 'sum_mujeres' => 0
+                    'total_exams' => 0, 
+                    'sum_score' => 0, 
+                    'unique_total' => [], // Set
+                    
+                    'exams_hombres' => 0, 
+                    'sum_hombres' => 0,
+                    'unique_hombres' => [], // Set
+
+                    'exams_mujeres' => 0, 
+                    'sum_mujeres' => 0,
+                    'unique_mujeres' => [] // Set
                 ];
             }
-            $stats[$jornada]['paralelos'][$paralelo]['total']++;
-            $stats[$jornada]['paralelos'][$paralelo]['sum'] += $score;
             
+            $pStats = &$stats[$jornada]['paralelos'][$paralelo];
+            $pStats['total_exams']++;
+            $pStats['sum_score'] += $score;
+            $pStats['unique_total'][$uid] = true;
+
             if ($genero === 'Masculino') {
-                $stats[$jornada]['paralelos'][$paralelo]['hombres']++;
-                $stats[$jornada]['paralelos'][$paralelo]['sum_hombres'] += $score;
+                $pStats['exams_hombres']++;
+                $pStats['sum_hombres'] += $score;
+                $pStats['unique_hombres'][$uid] = true;
             }
             if ($genero === 'Femenino') {
-                $stats[$jornada]['paralelos'][$paralelo]['mujeres']++;
-                $stats[$jornada]['paralelos'][$paralelo]['sum_mujeres'] += $score;
+                $pStats['exams_mujeres']++;
+                $pStats['sum_mujeres'] += $score;
+                $pStats['unique_mujeres'][$uid] = true;
             }
         }
     }
+    
+    // Post-process counts (convert arrays to integers)
+    foreach (['Matutina', 'Vespertina'] as $j) {
+        $stats[$j]['count_unique'] = count($stats[$j]['unique_users']);
+        $stats[$j]['genero']['Masculino'] = count($stats[$j]['genero_users']['Masculino'] ?? []);
+        $stats[$j]['genero']['Femenino'] = count($stats[$j]['genero_users']['Femenino'] ?? []);
+        
+        foreach ($stats[$j]['paralelos'] as $p => &$d) {
+            $d['count_unique'] = count($d['unique_total']);
+            $d['count_hombres'] = count($d['unique_hombres']);
+            $d['count_mujeres'] = count($d['unique_mujeres']);
+            // Clean up memory
+            unset($d['unique_total'], $d['unique_hombres'], $d['unique_mujeres']);
+        }
+        unset($stats[$j]['unique_users'], $stats[$j]['genero_users']);
+    }
+
     return $stats;
 }
 
