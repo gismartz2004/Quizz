@@ -109,35 +109,48 @@ try {
     $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // 3. GENERAR CSV
+    $mode = filter_input(INPUT_GET, 'mode'); // 'full' for detailed data
+    
     header('Content-Type: text/csv; charset=utf-8');
-    $prefix = ($filtro_muestra === 'si') ? 'muestra_' : 'reporte_';
+    $prefix = ($filtro_muestra === 'si') ? 'muestra_' : (($mode === 'full') ? 'detalle_completo_' : 'reporte_');
     header('Content-Disposition: attachment; filename=' . $prefix . 'resultados_' . date('Y-m-d_H-i') . '.csv');
 
     $output = fopen('php://output', 'w');
-    
-    // Add BOM for Excel UTF-8 compatibility
-    fputs($output, "\xEF\xBB\xBF");
+    fputs($output, "\xEF\xBB\xBF"); // BOM
 
-    // Headers
-    fputcsv($output, [
-        'ID Resultado', 
-        'Estudiante', 
-        'Email', 
-        'Examen', 
-        'Fecha', 
-        'Paralelo', 
-        'Genero', 
-        'Edad', 
-        'Puntos Obtenidos', 
-        'Nota Maxima', 
-        'Calificacion (/100)', 
-        'Integridad',
-        'Intentos Tab Switch',
-        'Segundos Fuera'
-    ]);
+    // Basic Headers
+    $headers = [
+        'ID Resultado', 'Estudiante', 'Email', 'Examen', 'Fecha', 
+        'Paralelo', 'Genero', 'Edad', 'Puntos Obtenidos', 'Nota Maxima', 
+        'Calificacion (/100)', 'Integridad', 'Intentos Tab Switch', 'Segundos Fuera'
+    ];
+
+    // If Full Mode: Fetch all questions involved
+    $questionMap = [];
+    if ($mode === 'full' && count($resultados) > 0) {
+        // Collect all Result IDs
+        $rids = array_column($resultados, 'id');
+        $inQuery = implode(',', array_map('intval', $rids));
+        
+        // Fetch all questions answered in these results to build dynamic columns
+        // We order by question ID to keep consistent structure
+        $sqlQ = "SELECT DISTINCT p.id, p.texto 
+                 FROM preguntas p 
+                 JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id 
+                 WHERE ru.resultado_id IN ($inQuery)
+                 ORDER BY p.id ASC";
+        $stmtQ = $pdo->query($sqlQ);
+        $allQuestions = $stmtQ->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($allQuestions as $q) {
+            $headers[] = "P" . $q['id'] . ": " . substr(strip_tags($q['texto']), 0, 50); // Column Header
+            $questionMap[$q['id']] = $q['texto'];
+        }
+    }
+
+    fputcsv($output, $headers);
 
     foreach ($resultados as $row) {
-        // Calcular campos derivados
         $puntos = (float)$row['puntos_obtenidos'];
         $max_puntos = (stripos($row['quiz_titulo'], 'Preguntas Abiertas') !== false) ? 20 : 250;
         $nota_final = ($max_puntos > 0) ? round(($puntos / $max_puntos) * 100, 2) : 0;
@@ -149,22 +162,33 @@ try {
         elseif ($swaps <= 2 && $time < 15) $nivel = 'Leve';
         else $nivel = 'Riesgo';
 
-        fputcsv($output, [
-            $row['id'],
-            $row['usuario_nombre'],
-            $row['usuario_email'],
-            $row['quiz_titulo'],
-            $row['fecha_realizacion'],
-            strtoupper($row['paralelo'] ?? 'N/A'),
-            ucfirst($row['genero'] ?? 'N/A'),
-            $row['edad'] ?? 'N/A',
-            $puntos,
-            $max_puntos,
-            $nota_final,
-            $nivel,
-            $swaps,
-            $time
-        ]);
+        $csvRow = [
+            $row['id'], $row['usuario_nombre'], $row['usuario_email'], $row['quiz_titulo'],
+            $row['fecha_realizacion'], strtoupper($row['paralelo'] ?? 'N/A'),
+            ucfirst($row['genero'] ?? 'N/A'), $row['edad'] ?? 'N/A',
+            $puntos, $max_puntos, $nota_final, $nivel, $swaps, $time
+        ];
+
+        // Append Answers if Full Mode
+        if ($mode === 'full') {
+            // Fetch answers for this specific result
+            $sqlAns = "SELECT pregunta_id, o.texto as respuesta_texto, ru.observacion_docente 
+                       FROM respuestas_usuarios ru 
+                       LEFT JOIN opciones o ON ru.opcion_id = o.id
+                       WHERE ru.resultado_id = ?";
+            $stmtAns = $pdo->prepare($sqlAns);
+            $stmtAns->execute([$row['id']]);
+            $answers = $stmtAns->fetchAll(PDO::FETCH_KEY_PAIR); // [pregunta_id => respuesta_texto]
+
+            foreach ($questionMap as $qId => $qText) {
+                // Check if student answered this question
+                $ansText = $answers[$qId] ?? '';
+                // Clean CSV injection or format issues
+                $csvRow[] = $ansText;
+            }
+        }
+
+        fputcsv($output, $csvRow);
     }
     
     fclose($output);

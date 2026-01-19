@@ -207,10 +207,18 @@ if (count($merged_quiz_ids) > 1) {
 try {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $resultados_raw = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC); // Standardize to $resultados
 } catch (PDOException $e) {
     die("Error cargando resultados: " . $e->getMessage());
 }
+
+// --- 5. LOGICA DE ANALITICAS (Refactorizada + Metricas Nuevas) ---
+require_once 'includes/analytics_data.php';
+
+// Calcular Estadísticas Avanzadas
+$sectionStats = calculateSectionStats($resultados);
+// Solo analizar destrezas si hay un quiz específico seleccionado y no es un grupo merged 
+$skillsStats = ($quiz_id && count($merged_quiz_ids) === 0) ? analyzeSkillsDiff($pdo, $quiz_id) : [];
 
 // 5. OBTENER DATOS AGREGADOS Y PREDICCIONES (MÁS EFICIENTE)
 try {
@@ -289,9 +297,16 @@ try {
     // 3. Demographics (Gender, Parallel) - also calculated from full results
 
     // Finalmente, obtener la lista de resultados para la tabla
+    // Finalmente, obtener la lista de resultados para la tabla
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $resultados_raw = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // --- GENERATE CONCLUSIONS (Refactored) ---
+    $conclusions = getConclusions($promedio_general, $tasa_aprobacion, $total_anomalias, $total_examenes);
+    $rendimientoMsg = $conclusions['rendimiento'];
+    $aprobacionMsg = $conclusions['aprobacion'];
+    $seguridadMsg = $conclusions['seguridad'];
 
 } catch (PDOException $e) {
     die("Error en agregación de datos: " . $e->getMessage());
@@ -684,398 +699,11 @@ function getScoreBadge($nota) {
     </script>
     -->
     
-    <style>
-        :root {
-            --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --gradient-success: linear-gradient(135deg, #0cebeb 0%, #20e3b2 100%);
-            --gradient-danger: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            --gradient-info: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            --bg-main: #f0f4f8;
-            --text-primary: #1a202c;
-            --text-secondary: #718096;
-            --card-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
-            --card-shadow-hover: 0 20px 60px rgba(0, 0, 0, 0.12);
-        }
-        
-        * {
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        
-        body {
-            background: var(--bg-main);
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            color: var(--text-primary);
-        }
-        
-        /* Header Styles */
-        .page-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 2rem 0;
-            border-radius: 20px;
-            margin-bottom: 2rem;
-            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.4);
-        }
-        
-        .page-header h4 {
-            color: white;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            margin: 0;
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-        }
-        
-        .page-header .btn {
-            background: rgba(255, 255, 255, 0.2);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            color: white;
-            font-weight: 600;
-            padding: 0.5rem 1.5rem;
-            border-radius: 12px;
-        }
-        
-        .page-header .btn:hover {
-            background: rgba(255, 255, 255, 0.3);
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.15);
-        }
-        
-        /* Card Styles */
-        .card-custom {
-            border: none;
-            border-radius: 20px;
-            box-shadow: var(--card-shadow);
-            background: white;
-            overflow: hidden;
-        }
-        
-        .card-custom:hover {
-            box-shadow: var(--card-shadow-hover);
-            transform: translateY(-5px);
-        }
-        
-        /* Stat Cards */
-        .stat-card {
-            position: relative;
-            padding: 1.5rem;
-            border-radius: 20px;
-            overflow: hidden;
-            color: white;
-            box-shadow: var(--card-shadow);
-        }
-        
-        .stat-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            opacity: 0.9;
-            z-index: 1;
-        }
-        
-        .stat-card.primary::before { background: var(--gradient-primary); }
-        .stat-card.success::before { background: var(--gradient-success); }
-        .stat-card.danger::before { background: var(--gradient-danger); }
-        .stat-card.info::before { background: var(--gradient-info); }
-        
-        .stat-card > * { position: relative; z-index: 2; }
-        
-        .stat-label {
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            opacity: 0.95;
-            margin-bottom: 0.5rem;
-        }
-        
-        .stat-val {
-            font-size: 2.5rem;
-            font-weight: 800;
-            line-height: 1;
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-        
-        .stat-icon {
-            position: absolute;
-            right: 1.5rem;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 3rem;
-            opacity: 0.2;
-        }
-        
-        /* Filter Form */
-        .filter-form {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 20px;
-            box-shadow: var(--card-shadow);
-        }
-        
-        .form-label {
-            font-size: 0.75rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-        }
-        
-        .form-select, .form-control {
-            border: 2px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 0.65rem 1rem;
-            font-weight: 500;
-            font-size: 0.9rem;
-        }
-        
-        .form-select:focus, .form-control:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
-        }
-        
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border: none;
-            border-radius: 12px;
-            padding: 0.65rem 1.5rem;
-            font-weight: 700;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-        }
-        
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
-        }
-        
-        .btn-light {
-            background: #f7fafc;
-            border: 2px solid #e2e8f0;
-            border-radius: 12px;
-            color: var(--text-secondary);
-            font-weight: 600;
-            padding: 0.65rem 1.5rem;
-        }
-        
-        .btn-light:hover {
-            background: #edf2f7;
-            border-color: #cbd5e0;
-        }
-        
-        /* Tabs */
-        .nav-tabs {
-            border: none;
-            background: white;
-            padding: 0.5rem;
-            border-radius: 15px;
-            box-shadow: var(--card-shadow);
-        }
-        
-        .nav-tabs .nav-link {
-            border: none;
-            color: var(--text-secondary);
-            font-weight: 600;
-            padding: 0.75rem 1.5rem;
-            border-radius: 10px;
-            margin: 0 0.25rem;
-        }
-        
-        .nav-tabs .nav-link:hover {
-            background: #f7fafc;
-            color: var(--text-primary);
-        }
-        
-        .nav-tabs .nav-link.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-        }
-        
-        .nav-tabs .badge {
-            background: rgba(255, 255, 255, 0.9);
-            color: #667eea;
-            font-weight: 700;
-            padding: 0.25rem 0.6rem;
-            border-radius: 8px;
-        }
-        
-        .nav-tabs .nav-link.active .badge {
-            background: rgba(255, 255, 255, 0.3);
-            color: white;
-        }
-        
-        /* Table */
-        .table {
-            color: var(--text-primary);
-        }
-        
-        .table thead {
-            background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
-        }
-        
-        .table thead th {
-            font-weight: 700;
-            text-transform: uppercase;
-            font-size: 0.75rem;
-            letter-spacing: 0.5px;
-            color: var(--text-secondary);
-            border: none;
-            padding: 1rem;
-        }
-        
-        .table tbody tr {
-            border-bottom: 1px solid #f0f4f8;
-        }
-        
-        .table tbody tr:hover {
-            background: linear-gradient(90deg, rgba(102, 126, 234, 0.03) 0%, rgba(118, 75, 162, 0.03) 100%);
-        }
-        
-        .table tbody td {
-            padding: 1.25rem 1rem;
-            vertical-align: middle;
-            border: none;
-        }
-        
-        /* Badges */
-        .bg-success-soft {
-            background: linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%);
-            color: #065f46;
-            padding: 0.5rem 1rem;
-            border-radius: 12px;
-            font-weight: 700;
-            font-size: 0.9rem;
-            display: inline-block;
-            box-shadow: 0 4px 15px rgba(150, 230, 161, 0.4);
-        }
-        
-        .bg-danger-soft {
-            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
-            color: #991b1b;
-            padding: 0.5rem 1rem;
-            border-radius: 12px;
-            font-weight: 700;
-            font-size: 0.9rem;
-            display: inline-block;
-            box-shadow: 0 4px 15px rgba(252, 182, 159, 0.4);
-        }
-        
-        .bg-info-soft {
-            background: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
-            color: #1e40af;
-            padding: 0.5rem 1rem;
-            border-radius: 12px;
-            font-weight: 700;
-            font-size: 0.9rem;
-            display: inline-block;
-            box-shadow: 0 4px 15px rgba(161, 196, 253, 0.4);
-        }
-        
-        /* Avatar */
-        .avatar-initial {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 800;
-            color: white;
-            font-size: 1.1rem;
-            margin-right: 1rem;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-        }
-        
-        /* Buttons */
-        .btn-outline-primary {
-            border: 2px solid #667eea;
-            color: #667eea;
-            border-radius: 12px;
-            font-weight: 600;
-            padding: 0.5rem 1.25rem;
-        }
-        
-        .btn-outline-primary:hover {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-color: transparent;
-            color: white;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
-        }
-        
-        /* Modal */
-        .modal-content {
-            border: none;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-        }
-        
-        .modal-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border-radius: 20px 20px 0 0;
-            padding: 1.5rem;
-        }
-        
-        .modal-title {
-            font-weight: 700;
-        }
-        
-        .modal-footer {
-            border-top: 1px solid #f0f4f8;
-            padding: 1.25rem;
-        }
-        
-        .btn-secondary {
-            background: #e2e8f0;
-            border: none;
-            color: var(--text-secondary);
-            font-weight: 600;
-            border-radius: 12px;
-        }
-        
-        .btn-secondary:hover {
-            background: #cbd5e0;
-            color: var(--text-primary);
-        }
-        
-        /* Animations */
-        @keyframes fadeInUp {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
-        .card-custom, .stat-card, .filter-form {
-            animation: fadeInUp 0.5s ease-out;
-        }
-        
-        /* Spinner */
-        .spinner-border {
-            width: 3rem;
-            height: 3rem;
-            border-width: 0.3rem;
-        }
-    </style>
+    <link rel="stylesheet" href="css/custom_dashboard.css">
 </head>
 <body class="bg-light">
 
-<style>
-    /* Copied Search Styles for Consistency */
-    .smart-search-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; }
-    .smart-search-input { width: 100%; padding: 0.8rem 1.5rem; padding-left: 2.8rem; border: none; border-radius: 50px; background: rgba(255,255,255,0.9); box-shadow: 0 4px 15px rgba(0,0,0,0.05); font-size: 1rem; transition: all 0.3s ease; }
-    .smart-search-input:focus { box-shadow: 0 8px 25px rgba(102, 126, 234, 0.2); outline: none; background: white; }
-    .smart-search-icon { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: #667eea; }
-</style>
+<!-- Smart Search Styles Moved to custom_dashboard.css -->
 
 <div class="container py-4">
     <div class="page-header">
@@ -1154,12 +782,26 @@ function getScoreBadge($nota) {
                     <option value="no" <?= $filtro_muestra === 'no' ? 'selected' : '' ?>>No muestra</option>
                 </select>
             </div>
-            <div class="col-md-3 d-flex align-items-end gap-2">
+            <div class="col-md-3 d-flex align-items-end gap-2 flex-wrap">
                 <button type="submit" class="btn btn-primary btn-sm flex-grow-1">Filtrar</button>
-                <a href="exportar_excel.php?<?= http_build_query(array_merge($_GET, ['muestra' => 'si'])) ?>" target="_blank" class="btn btn-success btn-sm flex-grow-1">
-                    <i class="fas fa-file-csv me-1"></i>Exportar Muestra
-                </a>
-                <a href="?" class="btn btn-light btn-sm">Limpiar</a>
+                <div class="btn-group flex-grow-1" role="group">
+                    <button type="button" class="btn btn-success btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="fas fa-file-csv me-1"></i>Exportar
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li>
+                            <a class="dropdown-item small" href="exportar_excel.php?<?= http_build_query(array_merge($_GET, ['muestra' => 'si'])) ?>" target="_blank">
+                                <i class="fas fa-file-csv me-2 text-success"></i>Solo Muestra (CSV)
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item small" href="exportar_excel.php?<?= http_build_query(array_merge($_GET, ['mode' => 'full'])) ?>" target="_blank">
+                                <i class="fas fa-table me-2 text-primary"></i>Datos Completos (RAW)
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <a href="?" class="btn btn-light btn-sm" title="Limpiar Filtros"><i class="fas fa-undo"></i></a>
             </div>
         </form>
     </div>
@@ -1258,9 +900,9 @@ function getScoreBadge($nota) {
             </div>
         </div>
 
-        <!-- Row 3: Ladder Chart & Conclusions Preview -->
+        <!-- Row 3: Ladder Chart -->
         <div class="row g-4 mb-4">
-            <div class="col-lg-6">
+            <div class="col-12">
                 <div class="card-custom p-4 h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6 class="fw-bold mb-0 text-dark">
@@ -1272,43 +914,6 @@ function getScoreBadge($nota) {
                     </div>
                     <div style="height: 300px;">
                         <canvas id="chartLadder"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-lg-6">
-                <div class="card-custom p-4 h-100">
-                    <h6 class="fw-bold mb-3 text-dark">
-                        <i class="fas fa-lightbulb me-2 text-warning"></i>Conclusiones Clave
-                    </h6>
-                    <div class="conclusions-preview">
-                        <?php
-                        $insights = [];
-                        if ($promedio_general >= 80) {
-                            $insights[] = ['icon' => 'fa-trophy', 'color' => 'success', 'text' => 'Rendimiento general excelente con promedio de ' . $promedio_general];
-                        } elseif ($promedio_general >= 70) {
-                            $insights[] = ['icon' => 'fa-check-circle', 'color' => 'info', 'text' => 'Rendimiento satisfactorio con promedio de ' . $promedio_general];
-                        } else {
-                            $insights[] = ['icon' => 'fa-exclamation-triangle', 'color' => 'warning', 'text' => 'Se requiere atención: promedio de ' . $promedio_general];
-                        }
-                        
-                        if ($tasa_aprobacion >= 80) {
-                            $insights[] = ['icon' => 'fa-users', 'color' => 'success', 'text' => 'Alta tasa de aprobación: ' . $tasa_aprobacion . '%'];
-                        } elseif ($tasa_aprobacion < 60) {
-                            $insights[] = ['icon' => 'fa-user-times', 'color' => 'danger', 'text' => 'Tasa de aprobación baja: ' . $tasa_aprobacion . '%'];
-                        }
-                        
-                        if ($total_anomalias > ($total_examenes * 0.2)) {
-                            $insights[] = ['icon' => 'fa-shield-alt', 'color' => 'danger', 'text' => 'Alertas de integridad elevadas: ' . $total_anomalias . ' casos'];
-                        }
-                        
-                        foreach ($insights as $insight):
-                        ?>
-                        <div class="insight-item mb-2">
-                            <i class="fas <?= $insight['icon'] ?> text-<?= $insight['color'] ?> me-2"></i>
-                            <span class="small"><?= $insight['text'] ?></span>
-                        </div>
-                        <?php endforeach; ?>
                     </div>
                 </div>
             </div>
@@ -1433,6 +1038,291 @@ function getScoreBadge($nota) {
                 </div>
             </div>
         </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- NEW ANALYTICS SECTIONS (Jornada, Skills, Conclusions) -->
+    <?php if ($total_examenes > 0): ?>
+    
+    <!-- Row 5: Section Analysis (New) -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card-custom p-4">
+                <h6 class="fw-bold mb-4 text-dark"><i class="fas fa-building me-2 text-primary"></i>Análisis por Jornada</h6>
+                
+                <div class="row text-center mb-4">
+                    <!-- Matutina Summary -->
+                    <div class="col-md-6 border-end">
+                        <h6 class="text-uppercase text-muted small fw-bold mb-3">Matutina (A-D)</h6>
+                        <div class="row">
+                            <div class="col-4">
+                                <div class="display-6 fw-bold text-primary"><?= $sectionStats['Matutina']['total'] ?></div>
+                                <div class="small text-muted">Estudiantes</div>
+                            </div>
+                            <div class="col-4">
+                                <?php 
+                                    $promM = $sectionStats['Matutina']['total'] > 0 
+                                        ? number_format($sectionStats['Matutina']['sum_notas'] / $sectionStats['Matutina']['total'], 1) 
+                                        : 0;
+                                ?>
+                                <div class="display-6 fw-bold text-dark"><?= $promM ?></div>
+                                <div class="small text-muted">Promedio</div>
+                            </div>
+                            <div class="col-4">
+                                <?php 
+                                    $aprobM = $sectionStats['Matutina']['total'] > 0 
+                                        ? number_format(($sectionStats['Matutina']['aprobados'] / $sectionStats['Matutina']['total']) * 100, 1) . '%'
+                                        : '0%';
+                                ?>
+                                <div class="display-6 fw-bold text-success"><?= $aprobM ?></div>
+                                <div class="small text-muted">Aprobación</div>
+                            </div>
+                        </div>
+                        <div class="mt-3 small text-muted">
+                            Hombres: <b><?= $sectionStats['Matutina']['genero']['Masculino'] ?></b> | 
+                            Mujeres: <b><?= $sectionStats['Matutina']['genero']['Femenino'] ?></b>
+                        </div>
+                    </div>
+
+                    <!-- Vespertina Summary -->
+                    <div class="col-md-6">
+                        <h6 class="text-uppercase text-muted small fw-bold mb-3">Vespertina (E-H)</h6>
+                        <div class="row">
+                            <div class="col-4">
+                                <div class="display-6 fw-bold text-info"><?= $sectionStats['Vespertina']['total'] ?></div>
+                                <div class="small text-muted">Estudiantes</div>
+                            </div>
+                            <div class="col-4">
+                                <?php 
+                                    $promV = $sectionStats['Vespertina']['total'] > 0 
+                                        ? number_format($sectionStats['Vespertina']['sum_notas'] / $sectionStats['Vespertina']['total'], 1) 
+                                        : 0;
+                                ?>
+                                <div class="display-6 fw-bold text-dark"><?= $promV ?></div>
+                                <div class="small text-muted">Promedio</div>
+                            </div>
+                            <div class="col-4">
+                                <?php 
+                                    $aprobV = $sectionStats['Vespertina']['total'] > 0 
+                                        ? number_format(($sectionStats['Vespertina']['aprobados'] / $sectionStats['Vespertina']['total']) * 100, 1) . '%'
+                                        : '0%';
+                                ?>
+                                <div class="display-6 fw-bold text-success"><?= $aprobV ?></div>
+                                <div class="small text-muted">Aprobación</div>
+                            </div>
+                        </div>
+                        <div class="mt-3 small text-muted">
+                            Hombres: <b><?= $sectionStats['Vespertina']['genero']['Masculino'] ?></b> | 
+                            Mujeres: <b><?= $sectionStats['Vespertina']['genero']['Femenino'] ?></b>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detail Tables -->
+                <div class="row">
+                        <div class="col-md-6">
+                        <div class="table-responsive">
+                        <table class="table table-sm table-hover small">
+                            <thead>
+                                <tr class="table-light"><th>Paralelo</th><th>Est.</th><th>Prom.</th><th>H</th><th>M</th></tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach($sectionStats['Matutina']['paralelos'] as $par => $d): ?>
+                                <tr>
+                                    <td><b><?= $par ?></b></td>
+                                    <td><?= $d['total'] ?></td>
+                                    <td><?= number_format($d['sum']/$d['total'], 1) ?></td>
+                                    <td><?= $d['hombres'] ?></td>
+                                    <td><?= $d['mujeres'] ?></td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        </div>
+                        </div>
+                        <div class="col-md-6">
+                        <div class="table-responsive">
+                        <table class="table table-sm table-hover small">
+                            <thead>
+                                <tr class="table-light"><th>Paralelo</th><th>Est.</th><th>Prom.</th><th>H</th><th>M</th></tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach($sectionStats['Vespertina']['paralelos'] as $par => $d): ?>
+                                <tr>
+                                    <td><b><?= $par ?></b></td>
+                                    <td><?= $d['total'] ?></td>
+                                    <td><?= number_format($d['sum']/$d['total'], 1) ?></td>
+                                    <td><?= $d['hombres'] ?></td>
+                                    <td><?= $d['mujeres'] ?></td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        </div>
+                        </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Row 6: Skills Analysis (Enhanced) -->
+    <?php if (!empty($skillsStats)): ?>
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card-custom p-4 bg-white border-danger border-start border-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h6 class="fw-bold mb-1 text-danger">
+                            <i class="fas fa-exclamation-triangle me-2"></i>Destrezas con Mayor Dificultad
+                        </h6>
+                        <p class="small text-muted mb-0">Las <?= count($skillsStats) ?> preguntas con menor tasa de aciertos.</p>
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger" onclick="exportSkillsToCSV()">
+                        <i class="fas fa-file-csv me-1"></i>Exportar CSV
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover table-borderless mb-0" id="skillsTable">
+                        <thead>
+                            <tr class="text-secondary small text-uppercase">
+                                <th width="60">#</th>
+                                <th>Pregunta</th>
+                                <th class="text-center" width="150">Tasa de Aciertos</th>
+                                <th class="text-end" width="100">Intentos</th>
+                                <th class="text-end" width="100">Correctas</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($skillsStats as $index => $skill): 
+                                $rate = $skill['total_intentos'] > 0 ? ($skill['correctas'] / $skill['total_intentos']) * 100 : 0;
+                                $barColor = $rate < 30 ? 'bg-danger' : ($rate < 50 ? 'bg-warning' : 'bg-info');
+                                $textColor = $rate < 30 ? 'text-danger' : ($rate < 50 ? 'text-warning' : 'text-info');
+                            ?>
+                            <tr>
+                                <td class="align-middle text-center">
+                                    <span class="badge bg-light text-dark fw-bold"><?= $index + 1 ?></span>
+                                </td>
+                                <td class="align-middle">
+                                    <div class="fw-medium text-dark mb-2" style="line-height: 1.4;">
+                                        <?= htmlspecialchars($skill['texto']) ?>
+                                    </div>
+                                    <div class="progress" style="height: 6px;">
+                                        <div class="progress-bar <?= $barColor ?>" role="progressbar" style="width: <?= $rate ?>%"></div>
+                                    </div>
+                                </td>
+                                <td class="text-center align-middle">
+                                    <span class="fw-bold <?= $textColor ?> fs-5"><?= number_format($rate, 1) ?>%</span>
+                                </td>
+                                <td class="text-end align-middle">
+                                    <span class="badge bg-light text-dark"><?= $skill['total_intentos'] ?></span>
+                                </td>
+                                <td class="text-end align-middle">
+                                    <span class="badge bg-success-soft text-success"><?= $skill['correctas'] ?></span>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Legend -->
+                <div class="mt-3 d-flex gap-3 small text-muted justify-content-end">
+                    <div><i class="fas fa-circle text-danger me-1"></i> < 30% Muy difícil</div>
+                    <div><i class="fas fa-circle text-warning me-1"></i> 30-50% Difícil</div>
+                    <div><i class="fas fa-circle text-info me-1"></i> > 50% Moderado</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php elseif ($quiz_id && count($merged_quiz_ids) > 1): ?>
+    <!-- Message when multiple quizzes are merged -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card-custom p-4 bg-light border-info border-start border-4">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="text-info" style="font-size: 2rem;">
+                        <i class="fas fa-info-circle"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold mb-1 text-dark">
+                            <i class="fas fa-puzzle-piece me-2 text-info"></i>Análisis de Destrezas No Disponible
+                        </h6>
+                        <p class="small text-muted mb-0">
+                            El análisis de preguntas difíciles requiere seleccionar <strong>un solo examen específico</strong>. 
+                            Has seleccionado un examen compuesto que combina múltiples evaluaciones.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php elseif (!$quiz_id): ?>
+    <!-- Message when no quiz is selected -->
+    <div class="row g-4 mb-4">
+        <div class="col-12">
+            <div class="card-custom p-4 bg-light border-warning border-start border-4">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="text-warning" style="font-size: 2rem;">
+                        <i class="fas fa-filter"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold mb-1 text-dark">
+                            <i class="fas fa-exclamation-triangle me-2 text-warning"></i>Destrezas con Mayor Dificultad
+                        </h6>
+                        <p class="small text-muted mb-2">
+                            Para ver las preguntas más difíciles, por favor:
+                        </p>
+                        <ol class="small text-muted mb-0 ps-3">
+                            <li>Selecciona un <strong>examen específico</strong> en el filtro "Seleccionar Examen"</li>
+                            <li>Haz clic en el botón <strong>"Filtrar"</strong></li>
+                            <li>Aquí aparecerán las 5 preguntas con menor tasa de aciertos</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Row 7: Conclusions (Moved/New) -->
+    <div class="mb-4">
+        <div class="card-custom p-4 bg-gradient-to-br from-white to-gray-50">
+            <h5 class="fw-bold mb-4 text-dark">
+                <i class="fas fa-lightbulb me-2 text-warning"></i>Conclusiones Clave
+            </h5>
+            <div class="row g-4">
+                <!-- Insight Cards -->
+                <div class="col-md-4">
+                    <div class="d-flex align-items-start gap-3 p-3 rounded-3" style="background: rgba(16, 185, 129, 0.1);">
+                        <div class="text-success mt-1"><i class="fas fa-chart-line fa-lg"></i></div>
+                        <div>
+                            <h6 class="fw-bold text-success mb-1">Rendimiento General</h6>
+                            <p class="small text-muted mb-0 lh-sm"><?= $rendimientoMsg ?></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="d-flex align-items-start gap-3 p-3 rounded-3" style="background: rgba(59, 130, 246, 0.1);">
+                        <div class="text-primary mt-1"><i class="fas fa-users fa-lg"></i></div>
+                        <div>
+                            <h6 class="fw-bold text-primary mb-1">Tasa de Aprobación</h6>
+                            <p class="small text-muted mb-0 lh-sm"><?= $aprobacionMsg ?></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="d-flex align-items-start gap-3 p-3 rounded-3" style="background: <?= strpos($seguridadMsg, 'críticas') !== false ? 'rgba(239, 68, 68, 0.1)' : 'rgba(245, 158, 11, 0.1)' ?>;">
+                        <div class="<?= strpos($seguridadMsg, 'críticas') !== false ? 'text-danger' : 'text-warning' ?> mt-1">
+                            <i class="fas fa-shield-alt fa-lg"></i>
+                        </div>
+                        <div>
+                            <h6 class="fw-bold <?= strpos($seguridadMsg, 'críticas') !== false ? 'text-danger' : 'text-warning' ?> mb-1">Integridad</h6>
+                            <p class="small text-muted mb-0 lh-sm"><?= $seguridadMsg ?></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
     <?php endif; ?>
@@ -2561,6 +2451,62 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     };
 
+    // --- EXPORT SKILLS TO CSV ---
+    window.exportSkillsToCSV = function() {
+        const table = document.getElementById('skillsTable');
+        if (!table) {
+            if (window.showToast) window.showToast('No hay datos para exportar', 'warning');
+            return;
+        }
+
+        let csv = [];
+        
+        // Header row
+        const headers = ['#', 'Pregunta', 'Tasa de Aciertos (%)', 'Intentos Totales', 'Respuestas Correctas'];
+        csv.push(headers.join(','));
+        
+        // Data rows
+        const rows = table.querySelectorAll('tbody tr');
+        rows.forEach((row, index) => {
+            const cols = row.querySelectorAll('td');
+            if (cols.length === 0) return;
+            
+            const rowNum = index + 1;
+            const question = cols[1].querySelector('.fw-medium')?.textContent.trim().replace(/"/g, '""') || '';
+            const rateText = cols[2].querySelector('.fw-bold')?.textContent.trim() || '0%';
+            const rate = rateText.replace('%', '');
+            const attempts = cols[3].querySelector('.badge')?.textContent.trim() || '0';
+            const correct = cols[4].querySelector('.badge')?.textContent.trim() || '0';
+            
+            csv.push([
+                rowNum,
+                `"${question}"`,
+                rate,
+                attempts,
+                correct
+            ].join(','));
+        });
+        
+        // Create download
+        const csvContent = csv.join('\n');
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        link.setAttribute('href', url);
+        link.setAttribute('download', `destrezas_dificiles_${new Date().toISOString().slice(0,10)}.csv`);
+        link.style.visibility = 'hidden';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        if (window.showToast) {
+            window.showToast('Datos exportados exitosamente', 'success');
+        }
+    };
+
+
     document.addEventListener('DOMContentLoaded', function() {
         console.log("Smart Search: Script loaded.");
         
@@ -2686,7 +2632,164 @@ document.addEventListener('DOMContentLoaded', function() {
                     // The PHP block currently does: $sql_all = "SELECT ..."; (No filters applied).
                     // So it is Global Count.
                 }
-            }
+            },
+
+            // ==========================================
+            // NUEVOS PATRONES: JORNADA, GÉNERO, PARALELO, MATERIAS
+            // ==========================================
+
+            // --- 9. DATOS POR JORNADA (MATUTINA/VESPERTINA) ---
+            {
+                id: 'jornada_matutina',
+                description: 'Filtrar por jornada matutina (paralelos A-D)',
+                triggers: [/\b(?:datos?\s*(?:por|de|en))?\s*matutina?\b/i, /\bjornada\s*matutina?\b/i],
+                action: (form) => {
+                    // Mostrar análisis por jornada (ya existe en el dashboard)
+                    // No filtramos paralelo específico, solo indicamos jornada
+                    // Podríamos agregar un scroll automático a la sección
+                    console.log('Query: Datos Matutina - Ver sección "Análisis por Jornada"');
+                }
+            },
+            {
+                id: 'jornada_vespertina',
+                description: 'Filtrar por jornada vespertina (paralelos E-H)',
+                triggers: [/\b(?:datos?\s*(?:por|de|en))?\s*vespertina?\b/i, /\bjornada\s*vespertina?\b/i],
+                action: (form) => {
+                    console.log('Query: Datos Vespertina - Ver sección "Análisis por Jornada"');
+                }
+            },
+
+            // --- 10. DATOS MATUTINA/VESPERTINA POR ÁREAS (MATERIAS) ---
+            {
+                id: 'jornada_por_areas',
+                description: 'Ver distribución de materias por jornada',
+                triggers: [/(?:datos|resultados)\s*(?:matutina?|vespertina?)\s*(?:por)?\s*(?:áreas?|materias?|asignaturas?)/i],
+                action: (form) => {
+                    // Los datos ya existen en stats_por_quiz_unified
+                    console.log('Query: Ver gráfico de promedio por materia (general)');
+                }
+            },
+
+            // --- 11. GÉNERO EN MATUTINA ---
+            {
+                id: 'genero_matutina_masculino',
+                description: 'Ver resultados masculinos en jornada matutina',
+                triggers: [/(?:datos|resultados)\s*(?:de)?\s*(?:hombres?|masculinos?)\s*(?:en|de)?\s*matutina?/i, /matutina?\s*(?:hombres?|masculinos?)/i],
+                action: (form) => {
+                    setVal(form, 'select[name="genero"]', 'Masculino');
+                    // Opcionalmente filtrar paralelos A-D para matutina
+                    console.log('Query: Masculino + Matutina');
+                }
+            },
+            {
+                id: 'genero_matutina_femenino',
+                description: 'Ver resultados femeninos en jornada matutina',
+                triggers: [/(?:datos|resultados)\s*(?:de)?\s*(?:mujeres?|femeninos?)\s*(?:en|de)?\s*matutina?/i, /matutina?\s*(?:mujeres?|femeninos?)/i],
+                action: (form) => {
+                    setVal(form, 'select[name="genero"]', 'Femenino');
+                    console.log('Query: Femenino + Matutina');
+                }
+            },
+
+            // --- 12. GÉNERO EN VESPERTINA ---
+            {
+                id: 'genero_vespertina_masculino',
+                description: 'Ver resultados masculinos en jornada vespertina',
+                triggers: [/(?:datos|resultados)\s*(?:de)?\s*(?:hombres?|masculinos?)\s*(?:en|de)?\s*vespertina?/i, /vespertina?\s*(?:hombres?|masculinos?)/i],
+                action: (form) => {
+                    setVal(form, 'select[name="genero"]', 'Masculino');
+                    console.log('Query: Masculino + Vespertina');
+                }
+            },
+            {
+                id: 'genero_vespertina_femenino',
+                description: 'Ver resultados femeninos en jornada vespertina',
+                triggers: [/(?:datos|resultados)\s*(?:de)?\s*(?:mujeres?|femeninos?)\s*(?:en|de)?\s*vespertina?/i, /vespertina?\s*(?:mujeres?|femeninos?)/i],
+                action: (form) => {
+                    setVal(form, 'select[name="genero"]', 'Femenino');
+                    console.log('Query: Femenino + Vespertina');
+                }
+            },
+
+            // --- 13. DATOS POR PARALELO EN MATUTINA ---
+            {
+                id: 'paralelo_matutina',
+                description: 'Ver datos de un paralelo específico en matutina',
+                triggers: [/(?:datos|resultados)\s*(?:del)?\s*paralelo\s*([a-d])\s*(?:en|de)?\s*matutina?/i, /matutina?\s*paralelo\s*([a-d])/i],
+                action: (form, match) => {
+                    setVal(form, 'select[name="paralelo"]', match[1].toUpperCase());
+                    console.log(`Query: Paralelo ${match[1].toUpperCase()} (Matutina)`);
+                }
+            },
+
+            // --- 14. DATOS POR PARALELO EN VESPERTINA ---
+            {
+                id: 'paralelo_vespertina',
+                description: 'Ver datos de un paralelo específico en vespertina',
+                triggers: [/(?:datos|resultados)\s*(?:del)?\s*paralelo\s*([e-h])\s*(?:en|de)?\s*vespertina?/i, /vespertina?\s*paralelo\s*([e-h])/i],
+                action: (form, match) => {
+                    setVal(form, 'select[name="paralelo"]', match[1].toUpperCase());
+                    console.log(`Query: Paralelo ${match[1].toUpperCase()} (Vespertina)`);
+                }
+            },
+
+            // --- 15. DATOS POR PARALELO DE LAS 4 ASIGNATURAS ---
+            {
+                id: 'paralelo_asignaturas',
+                description: 'Ver rendimiento de un paralelo en todas las materias',
+                triggers: [/(?:datos|resultados)\s*(?:del)?\s*paralelo\s*([a-h])\s*(?:en|de)?\s*(?:las)?\s*(?:4\s*)?(?:asignaturas?|materias?)/i],
+                action: (form, match) => {
+                    setVal(form, 'select[name="paralelo"]', match[1].toUpperCase());
+                    // Mostrar gráfico materia vs paralelo
+                    console.log(`Query: Paralelo ${match[1].toUpperCase()} en todas las materias`);
+                }
+            },
+
+            // --- 16. PARALELOS QUE APROBARON X MATERIAS ---
+            {
+                id: 'paralelos_aprobados',
+                description: 'Ver cuántos estudiantes por paralelo aprobaron X materias',
+                triggers: [/(?:datos|resultados)\s*(?:de)?\s*paralelos?\s*(?:que)?\s*aprobaron\s*(\d+)\s*materias?/i, /paralelos?\s*(?:con)?\s*(\d+)\s*materias?\s*aprobadas?/i],
+                action: (form, match) => {
+                    // Esta métrica requiere análisis especial
+                    // Podríamos usar el gráfico de "Materias Aprobadas por Estudiante"
+                    console.log(`Query: Paralelos con ${match[1]} materias aprobadas`);
+                }
+            },
+
+            // --- 17. JORNADAS QUE APROBARON X MATERIAS ---
+            {
+                id: 'jornadas_aprobadas',
+                description: 'Ver cuántos estudiantes por jornada aprobaron X materias',
+                triggers: [/(?:datos|resultados)\s*(?:de)?\s*jornadas?\s*(?:que)?\s*aprobaron\s*(\d+)\s*materias?/i, /jornadas?\s*(?:con)?\s*(\d+)\s*materias?\s*aprobadas?/i],
+                action: (form, match) => {
+                    console.log(`Query: Jornadas con ${match[1]} materias aprobadas`);
+                }
+            },
+
+            // --- 18. PARALELO EN MATUTINA - HOMBRES ---
+            {
+                id: 'paralelo_matutina_hombres',
+                description: 'Ver resultados masculinos de un paralelo en matutina',
+                triggers: [/(?:datos|resultados)\s*(?:del)?\s*paralelo\s*([a-d])\s*(?:en)?\s*matutina?\s*(?:hombres?|masculinos?)/i, /(?:hombres?|masculinos?)\s*(?:del)?\s*paralelo\s*([a-d])\s*(?:en)?\s*matutina?/i],
+                action: (form, match) => {
+                    setVal(form, 'select[name="paralelo"]', match[1].toUpperCase());
+                    setVal(form, 'select[name="genero"]', 'Masculino');
+                    console.log(`Query: Paralelo ${match[1].toUpperCase()} Matutina - Hombres`);
+                }
+            },
+
+            // --- 19. PARALELO EN MATUTINA - MUJERES ---
+            {
+                id: 'paralelo_matutina_mujeres',
+                description: 'Ver resultados femeninos de un paralelo en matutina',
+                triggers: [/(?:datos|resultados)\s*(?:del)?\s*paralelo\s*([a-d])\s*(?:en)?\s*matutina?\s*(?:mujeres?|femeninos?)/i, /(?:mujeres?|femeninos?)\s*(?:del)?\s*paralelo\s*([a-d])\s*(?:en)?\s*matutina?/i],
+                action: (form, match) => {
+                    setVal(form, 'select[name="paralelo"]', match[1].toUpperCase());
+                    setVal(form, 'select[name="genero"]', 'Femenino');
+                    console.log(`Query: Paralelo ${match[1].toUpperCase()} Matutina - Mujeres`);
+                }
+
         ];
 
         // Helpers
@@ -2778,6 +2881,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
     });
 </script>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 
 </body>
 </html>
