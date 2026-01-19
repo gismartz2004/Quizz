@@ -789,14 +789,42 @@ function getScoreBadge($nota) {
                         <i class="fas fa-file-csv me-1"></i>Exportar
                     </button>
                     <ul class="dropdown-menu">
+                        <li class="dropdown-header">Exportar con filtros actuales</li>
                         <li>
-                            <a class="dropdown-item small" href="exportar_excel.php?<?= http_build_query(array_merge($_GET, ['muestra' => 'si'])) ?>" target="_blank">
-                                <i class="fas fa-file-csv me-2 text-success"></i>Solo Muestra (CSV)
+                            <a class="dropdown-item small" href="exportar_excel.php?<?php 
+                                $export_params = $_GET;
+                                unset($export_params['mode']); // Remove mode param for simple export
+                                echo http_build_query($export_params);
+                            ?>" target="_blank">
+                                <i class="fas fa-table me-2 text-success"></i>Datos Filtrados (Simple)
                             </a>
                         </li>
                         <li>
-                            <a class="dropdown-item small" href="exportar_excel.php?<?= http_build_query(array_merge($_GET, ['mode' => 'full'])) ?>" target="_blank">
-                                <i class="fas fa-table me-2 text-primary"></i>Datos Completos (RAW)
+                            <a class="dropdown-item small" href="exportar_excel.php?<?php 
+                                $export_full = $_GET;
+                                unset($export_full['muestra']); // Remove sample filter for full export
+                                $export_full['mode'] = 'full'; // Add full mode
+                                echo http_build_query($export_full);
+                            ?>" target="_blank">
+                                <i class="fas fa-file-csv me-2 text-primary"></i>Datos Filtrados (Con Preguntas)
+                            </a>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li class="dropdown-header">Exportar TODO (sin filtros)</li>
+                        <li>
+                            <a class="dropdown-item small fw-bold" href="exportar_excel.php" target="_blank">
+                                <i class="fas fa-database me-2 text-danger"></i>TODO (Simple)
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item small fw-bold" href="exportar_excel.php?mode=full" target="_blank">
+                                <i class="fas fa-table me-2 text-danger"></i>TODO (Con Preguntas)
+                            </a>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <a class="dropdown-item small" href="exportar_excel.php?<?= http_build_query(array_merge($_GET, ['muestra' => 'si'])) ?>" target="_blank">
+                                <i class="fas fa-filter me-2 text-warning"></i>Solo Muestra
                             </a>
                         </li>
                     </ul>
