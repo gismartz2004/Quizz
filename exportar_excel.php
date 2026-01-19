@@ -104,19 +104,31 @@ if ($max_nota !== '' && $max_nota !== null) {
 $sql .= " ORDER BY r.fecha_realizacion DESC";
 
 try {
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
     // 3. GENERAR CSV
     $mode = filter_input(INPUT_GET, 'mode'); // 'full' for detailed data
     
+    // Increase memory and time limit for large exports
+    ini_set('memory_limit', '512M');
+    set_time_limit(300);
+
+    // Prepare headers first to start outputting immediately if possible
     header('Content-Type: text/csv; charset=utf-8');
     $prefix = ($filtro_muestra === 'si') ? 'muestra_' : (($mode === 'full') ? 'detalle_completo_' : 'reporte_');
     header('Content-Disposition: attachment; filename=' . $prefix . 'resultados_' . date('Y-m-d_H-i') . '.csv');
 
     $output = fopen('php://output', 'w');
     fputs($output, "\xEF\xBB\xBF"); // BOM
+
+    // Execute Main Query
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($resultados)) {
+        fputcsv($output, ['No se encontraron resultados con los filtros seleccionados.']);
+        fclose($output);
+        exit;
+    }
 
     // Basic Headers
     $headers = [
@@ -125,31 +137,62 @@ try {
         'Calificacion (/100)', 'Integridad', 'Intentos Tab Switch', 'Segundos Fuera'
     ];
 
-    // If Full Mode: Fetch all questions involved
     $questionMap = [];
-    if ($mode === 'full' && count($resultados) > 0) {
-        // Collect all Result IDs
-        $rids = array_column($resultados, 'id');
-        $inQuery = implode(',', array_map('intval', $rids));
-        
-        // Fetch all questions answered in these results to build dynamic columns
-        // We order by question ID to keep consistent structure
-        $sqlQ = "SELECT DISTINCT p.id, p.texto 
-                 FROM preguntas p 
-                 JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id 
-                 WHERE ru.resultado_id IN ($inQuery)
-                 ORDER BY p.id ASC";
-        $stmtQ = $pdo->query($sqlQ);
-        $allQuestions = $stmtQ->fetchAll(PDO::FETCH_ASSOC);
+    $allAnswers = []; 
 
-        foreach ($allQuestions as $q) {
-            $headers[] = "P" . $q['id'] . ": " . substr(strip_tags($q['texto']), 0, 50); // Column Header
-            $questionMap[$q['id']] = $q['texto'];
+    // If Full Mode: Optimization technique
+    if ($mode === 'full') {
+        $rids = array_column($resultados, 'id');
+        
+        // Chunking the IDs to avoid massive IN clauses that break limits
+        $chunks = array_chunk($rids, 1000);
+        
+        // First pass: Identify ALL unique questions across this entire result set
+        // We do this to ensure consistent columns even if some chunks have different questions
+        foreach ($chunks as $chunk) {
+            $inQuery = implode(',', array_map('intval', $chunk));
+            $sqlQ = "SELECT DISTINCT p.id, p.texto 
+                     FROM preguntas p 
+                     JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id 
+                     WHERE ru.resultado_id IN ($inQuery)";
+            $stmtQ = $pdo->query($sqlQ);
+            while ($q = $stmtQ->fetch(PDO::FETCH_ASSOC)) {
+                $questionMap[$q['id']] = $q['texto'];
+            }
+        }
+        
+        // Sort questions by ID to keep columns consistent
+        ksort($questionMap);
+
+        // Add Question Headers
+        foreach ($questionMap as $qId => $qText) {
+            $headers[] = "P" . $qId . ": " . substr(strip_tags($qText), 0, 50);
+        }
+        
+        // Pre-fetch ALL answers for these results in one go (or chunks) to avoid N+1 query loop
+        // We'll store them in memory: [resultado_id][pregunta_id] = text
+        foreach ($chunks as $chunk) {
+            $inQuery = implode(',', array_map('intval', $chunk));
+            $sqlAns = "SELECT ru.resultado_id, ru.pregunta_id, o.texto as respuesta_texto, ru.observacion_docente 
+                       FROM respuestas_usuarios ru 
+                       LEFT JOIN opciones o ON ru.opcion_id = o.id
+                       WHERE ru.resultado_id IN ($inQuery)";
+            $stmtAns = $pdo->query($sqlAns);
+            
+            while ($ans = $stmtAns->fetch(PDO::FETCH_ASSOC)) {
+                $rid = $ans['resultado_id'];
+                $qid = $ans['pregunta_id'];
+                // Use option text or whatever fallback
+                $txt = $ans['respuesta_texto'];
+                $allAnswers[$rid][$qid] = $txt;
+            }
         }
     }
 
+    // Output Headers
     fputcsv($output, $headers);
 
+    // Output Rows
     foreach ($resultados as $row) {
         $puntos = (float)$row['puntos_obtenidos'];
         $max_puntos = (stripos($row['quiz_titulo'], 'Preguntas Abiertas') !== false) ? 20 : 250;
@@ -169,21 +212,12 @@ try {
             $puntos, $max_puntos, $nota_final, $nivel, $swaps, $time
         ];
 
-        // Append Answers if Full Mode
+        // Append Answers if Full Mode using the in-memory array
         if ($mode === 'full') {
-            // Fetch answers for this specific result
-            $sqlAns = "SELECT pregunta_id, o.texto as respuesta_texto, ru.observacion_docente 
-                       FROM respuestas_usuarios ru 
-                       LEFT JOIN opciones o ON ru.opcion_id = o.id
-                       WHERE ru.resultado_id = ?";
-            $stmtAns = $pdo->prepare($sqlAns);
-            $stmtAns->execute([$row['id']]);
-            $answers = $stmtAns->fetchAll(PDO::FETCH_KEY_PAIR); // [pregunta_id => respuesta_texto]
-
+            $rId = $row['id'];
             foreach ($questionMap as $qId => $qText) {
                 // Check if student answered this question
-                $ansText = $answers[$qId] ?? '';
-                // Clean CSV injection or format issues
+                $ansText = $allAnswers[$rId][$qId] ?? '';
                 $csvRow[] = $ansText;
             }
         }
