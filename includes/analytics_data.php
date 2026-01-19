@@ -39,12 +39,23 @@ function calculateSectionStats($results) {
             }
 
             if (!isset($stats[$jornada]['paralelos'][$paralelo])) {
-                $stats[$jornada]['paralelos'][$paralelo] = ['total' => 0, 'sum' => 0, 'hombres' => 0, 'mujeres' => 0];
+                $stats[$jornada]['paralelos'][$paralelo] = [
+                    'total' => 0, 'sum' => 0, 
+                    'hombres' => 0, 'sum_hombres' => 0,
+                    'mujeres' => 0, 'sum_mujeres' => 0
+                ];
             }
             $stats[$jornada]['paralelos'][$paralelo]['total']++;
             $stats[$jornada]['paralelos'][$paralelo]['sum'] += $score;
-            if ($genero === 'Masculino') $stats[$jornada]['paralelos'][$paralelo]['hombres']++;
-            if ($genero === 'Femenino') $stats[$jornada]['paralelos'][$paralelo]['mujeres']++;
+            
+            if ($genero === 'Masculino') {
+                $stats[$jornada]['paralelos'][$paralelo]['hombres']++;
+                $stats[$jornada]['paralelos'][$paralelo]['sum_hombres'] += $score;
+            }
+            if ($genero === 'Femenino') {
+                $stats[$jornada]['paralelos'][$paralelo]['mujeres']++;
+                $stats[$jornada]['paralelos'][$paralelo]['sum_mujeres'] += $score;
+            }
         }
     }
     return $stats;

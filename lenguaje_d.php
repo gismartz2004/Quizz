@@ -1149,46 +1149,95 @@ function getScoreBadge($nota) {
 
                 <!-- Detail Tables -->
                 <div class="row">
-                        <div class="col-md-6">
+                    <!-- MATUTINA TABLE -->
+                    <div class="col-md-6 border-end">
                         <div class="table-responsive">
-                        <table class="table table-sm table-hover small">
-                            <thead>
-                                <tr class="table-light"><th>Paralelo</th><th>Est.</th><th>Prom.</th><th>H</th><th>M</th></tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach($sectionStats['Matutina']['paralelos'] as $par => $d): ?>
-                                <tr>
-                                    <td><b><?= $par ?></b></td>
-                                    <td><?= $d['total'] ?></td>
-                                    <td><?= number_format($d['sum']/$d['total'], 1) ?></td>
-                                    <td><?= $d['hombres'] ?></td>
-                                    <td><?= $d['mujeres'] ?></td>
-                                </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                            <table class="table table-sm table-hover small mb-0">
+                                <thead class="table-light">
+                                    <tr class="text-center">
+                                        <th class="text-start">Paralelo</th>
+                                        <th>Total</th>
+                                        <th>Prom.</th>
+                                        <th class="border-start text-primary"><i class="fas fa-mars"></i> Hombres</th>
+                                        <th class="border-start text-danger"><i class="fas fa-venus"></i> Mujeres</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php 
+                                    ksort($sectionStats['Matutina']['paralelos']);
+                                    foreach($sectionStats['Matutina']['paralelos'] as $par => $d): 
+                                        $avgH = $d['hombres'] > 0 ? number_format($d['sum_hombres']/$d['hombres'], 1) : '-';
+                                        $avgM = $d['mujeres'] > 0 ? number_format($d['sum_mujeres']/$d['mujeres'], 1) : '-';
+                                    ?>
+                                    <tr class="text-center align-middle">
+                                        <td class="text-start fw-bold bg-light text-dark"><?= $par ?></td>
+                                        <td class="fw-bold"><?= $d['total'] ?></td>
+                                        <td class="fw-bold text-dark"><?= number_format($d['sum']/$d['total'], 1) ?></td>
+                                        
+                                        <td class="border-start bg-blue-50">
+                                            <div class="d-flex justify-content-center gap-2">
+                                                <span class="badge bg-primary-soft text-primary small" title="Cantidad"><?= $d['hombres'] ?></span>
+                                                <span class="small fw-bold text-muted" title="Promedio"><?= $avgH ?></span>
+                                            </div>
+                                        </td>
+                                        
+                                        <td class="border-start bg-red-50">
+                                            <div class="d-flex justify-content-center gap-2">
+                                                <span class="badge bg-danger-soft text-danger small" title="Cantidad"><?= $d['mujeres'] ?></span>
+                                                <span class="small fw-bold text-muted" title="Promedio"><?= $avgM ?></span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
                         </div>
-                        </div>
-                        <div class="col-md-6">
+                    </div>
+
+                    <!-- VESPERTINA TABLE -->
+                    <div class="col-md-6">
                         <div class="table-responsive">
-                        <table class="table table-sm table-hover small">
-                            <thead>
-                                <tr class="table-light"><th>Paralelo</th><th>Est.</th><th>Prom.</th><th>H</th><th>M</th></tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach($sectionStats['Vespertina']['paralelos'] as $par => $d): ?>
-                                <tr>
-                                    <td><b><?= $par ?></b></td>
-                                    <td><?= $d['total'] ?></td>
-                                    <td><?= number_format($d['sum']/$d['total'], 1) ?></td>
-                                    <td><?= $d['hombres'] ?></td>
-                                    <td><?= $d['mujeres'] ?></td>
-                                </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                            <table class="table table-sm table-hover small mb-0">
+                                <thead class="table-light">
+                                    <tr class="text-center">
+                                        <th class="text-start">Paralelo</th>
+                                        <th>Total</th>
+                                        <th>Prom.</th>
+                                        <th class="border-start text-primary"><i class="fas fa-mars"></i> Hombres</th>
+                                        <th class="border-start text-danger"><i class="fas fa-venus"></i> Mujeres</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php 
+                                    ksort($sectionStats['Vespertina']['paralelos']);
+                                    foreach($sectionStats['Vespertina']['paralelos'] as $par => $d): 
+                                        $avgH = $d['hombres'] > 0 ? number_format($d['sum_hombres']/$d['hombres'], 1) : '-';
+                                        $avgM = $d['mujeres'] > 0 ? number_format($d['sum_mujeres']/$d['mujeres'], 1) : '-';
+                                    ?>
+                                    <tr class="text-center align-middle">
+                                        <td class="text-start fw-bold bg-light text-dark"><?= $par ?></td>
+                                        <td class="fw-bold"><?= $d['total'] ?></td>
+                                        <td class="fw-bold text-dark"><?= number_format($d['sum']/$d['total'], 1) ?></td>
+                                        
+                                        <td class="border-start bg-blue-50">
+                                            <div class="d-flex justify-content-center gap-2">
+                                                <span class="badge bg-primary-soft text-primary small" title="Cantidad"><?= $d['hombres'] ?></span>
+                                                <span class="small fw-bold text-muted" title="Promedio"><?= $avgH ?></span>
+                                            </div>
+                                        </td>
+                                        
+                                        <td class="border-start bg-red-50">
+                                            <div class="d-flex justify-content-center gap-2">
+                                                <span class="badge bg-danger-soft text-danger small" title="Cantidad"><?= $d['mujeres'] ?></span>
+                                                <span class="small fw-bold text-muted" title="Promedio"><?= $avgM ?></span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
                         </div>
-                        </div>
+                    </div>
                 </div>
             </div>
         </div>

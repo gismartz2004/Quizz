@@ -88,12 +88,26 @@ body {
     z-index: 1;
 }
 
-.stat-card.primary::before { background: var(--gradient-primary); }
-.stat-card.success::before { background: var(--gradient-success); }
-.stat-card.danger::before { background: var(--gradient-danger); }
-.stat-card.info::before { background: var(--gradient-info); }
+.stat-card.primary::before {
+    background: var(--gradient-primary);
+}
 
-.stat-card > * { position: relative; z-index: 2; }
+.stat-card.success::before {
+    background: var(--gradient-success);
+}
+
+.stat-card.danger::before {
+    background: var(--gradient-danger);
+}
+
+.stat-card.info::before {
+    background: var(--gradient-info);
+}
+
+.stat-card>* {
+    position: relative;
+    z-index: 2;
+}
 
 .stat-label {
     font-size: 0.75rem;
@@ -137,7 +151,8 @@ body {
     margin-bottom: 0.5rem;
 }
 
-.form-select, .form-control {
+.form-select,
+.form-control {
     border: 2px solid #e2e8f0;
     border-radius: 12px;
     padding: 0.65rem 1rem;
@@ -145,7 +160,8 @@ body {
     font-size: 0.9rem;
 }
 
-.form-select:focus, .form-control:focus {
+.form-select:focus,
+.form-control:focus {
     border-color: #667eea;
     box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
 }
@@ -362,13 +378,16 @@ body {
         opacity: 0;
         transform: translateY(20px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
     }
 }
 
-.card-custom, .stat-card, .filter-form {
+.card-custom,
+.stat-card,
+.filter-form {
     animation: fadeInUp 0.5s ease-out;
 }
 
@@ -380,7 +399,71 @@ body {
 }
 
 /* Smart Search */
-.smart-search-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; }
-.smart-search-input { width: 100%; padding: 0.8rem 1.5rem; padding-left: 2.8rem; border: none; border-radius: 50px; background: rgba(255,255,255,0.9); box-shadow: 0 4px 15px rgba(0,0,0,0.05); font-size: 1rem; transition: all 0.3s ease; }
-.smart-search-input:focus { box-shadow: 0 8px 25px rgba(102, 126, 234, 0.2); outline: none; background: white; }
-.smart-search-icon { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: #667eea; }
+.smart-search-container {
+    position: relative;
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.smart-search-input {
+    width: 100%;
+    padding: 0.8rem 1.5rem;
+    padding-left: 2.8rem;
+    border: none;
+    border-radius: 50px;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+    font-size: 1rem;
+    transition: all 0.3s ease;
+}
+
+.smart-search-input:focus {
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.2);
+    outline: none;
+    background: white;
+}
+
+.smart-search-icon {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #667eea;
+}
+
+/* New Utility Classes for Enhanced Tables */
+.bg-primary-soft {
+    background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+    color: #1565c0;
+    padding: 0.25rem 0.6rem;
+    /* Smaller padding for table badges */
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    display: inline-block;
+}
+
+/* Override existing soft badges for table context if needed, or keep generic */
+.bg-danger-soft.small,
+.bg-primary-soft.small {
+    padding: 0.25rem 0.6rem;
+    font-size: 0.8rem;
+}
+
+.bg-blue-50 {
+    background-color: #eff6ff !important;
+}
+
+.bg-red-50 {
+    background-color: #fef2f2 !important;
+}
+
+.text-purple {
+    color: #764ba2 !important;
+}
+
+.bg-purple {
+    background: linear-gradient(135deg, #a18cd1 0%, #fbc2eb 100%);
+    color: #4a1c40;
+}
