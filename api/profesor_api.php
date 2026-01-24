@@ -37,7 +37,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'preview' && isset($_GET['id']
             
             // Check for image in question
             if(!empty($p['imagen'])) {
-                echo '<br><img src="assets/images/'.htmlspecialchars($p['imagen']).'" style="max-height:100px; margin-top:5px;">';
+                $imgSrc = (strpos($p['imagen'], 'http') === 0) ? $p['imagen'] : '../assets/images/' . $p['imagen'];
+                echo '<br><img src="'.htmlspecialchars($imgSrc).'" style="max-height:100px; margin-top:5px;">';
             }
 
             foreach($p['respuestas'] as $r) {

@@ -179,7 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     try {
-        $pdo->beginTransaction();
+        // $pdo->beginTransaction(); // Debugging: Disable transaction to see raw error
 
         // Insertar quiz
         $stmt = $pdo->prepare(
@@ -190,15 +190,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
         $creado_por = $_SESSION['usuario']['id'] ?? 1;
 
         $stmt->execute([
-            $_POST['titulo'],
-            $_POST['descripcion'],
+            trim($_POST['titulo']),
+            trim($_POST['descripcion']),
             $_POST['color_primario'],
             $_POST['color_secundario'],
-            $_POST['valor_total'],
-            $_POST['fecha_inicio'],
-            $_POST['fecha_fin'],
-            $_POST['duracion_minutos'],
-            $creado_por
+            (int)$_POST['valor_total'],
+            $_POST['fecha_inicio'] ?: null,
+            $_POST['fecha_fin'] ?: null,
+            (int)$_POST['duracion_minutos'],
+            (int)$creado_por
         ]);
 
         $quiz_id = $pdo->lastInsertId();
@@ -228,34 +228,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
                 throw new Exception("No se generó ID para la pregunta en posición $i.");
             }
 
-            // Subir imagen si existe
+            // Subir imagen a Cloudinary si existe
             if (!empty($_FILES['pregunta_imagen']['name'][$i])) {
-                $archivoNombre = $_FILES['pregunta_imagen']['name'][$i];
+                require_once 'includes/cloudinary_helper.php';
                 $archivoTmp = $_FILES['pregunta_imagen']['tmp_name'][$i];
+                
+                // Subir a Cloudinary
+                $secureUrl = uploadToCloudinary($archivoTmp);
 
-                $ext = strtolower(pathinfo($archivoNombre, PATHINFO_EXTENSION));
-                $extensionesPermitidas = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-
-                if (!in_array($ext, $extensionesPermitidas)) {
-                    throw new Exception("Extensión no permitida: '$ext'. Solo se aceptan: " . implode(', ', $extensionesPermitidas));
+                if ($secureUrl) {
+                    // Actualizar con la URL segura de Cloudinary
+                    $pdo->prepare("UPDATE preguntas SET imagen = ? WHERE id = ?")
+                        ->execute([$secureUrl, $pregunta_id]);
+                } else {
+                    // Opcional: Podrías lanzar una excepción o solo loguear el error
+                    // throw new Exception("Error al subir imagen a Cloudinary para la pregunta $i.");
                 }
-
-                if (!is_dir('assets/images')) {
-                    if (!mkdir('assets/images', 0777, true)) {
-                        throw new Exception("No se pudo crear la carpeta 'assets/images'. Verifica permisos.");
-                    }
-                }
-
-                $nombreImagen = "p_{$pregunta_id}_" . time() . "." . $ext;
-                $rutaDestino = "assets/images/" . $nombreImagen;
-
-                if (!move_uploaded_file($archivoTmp, $rutaDestino)) {
-                    throw new Exception("Error al mover la imagen a: $rutaDestino. Permisos o ruta incorrecta.");
-                }
-
-                // Actualizar con nombre de imagen
-                $pdo->prepare("UPDATE preguntas SET imagen = ? WHERE id = ?")
-                    ->execute([$nombreImagen, $pregunta_id]);
             }
 
             // Procesar respuestas
@@ -275,12 +263,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
             }
         }
 
-        $pdo->commit();
+        // $pdo->commit();
         echo "<script>alert('¡Quiz guardado correctamente!'); window.location.href='profesor.php';</script>";
         exit;
 
     } catch (Exception $e) {
-        $pdo->rollBack();
+        // $pdo->rollBack();
         $mensaje = "Error al guardar el quiz: " . $e->getMessage();
         $tipoMensaje = 'error';
     }

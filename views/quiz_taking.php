@@ -52,8 +52,10 @@ include 'includes/header.php';
                     <div class="q-text"><?= htmlspecialchars($pregunta['texto']) ?></div>
                 </div>
 
-                <?php if (!empty($pregunta['imagen'])): ?>
-                    <img src="assets/images/<?= htmlspecialchars($pregunta['imagen']) ?>" class="q-image" alt="Imagen Referencia">
+                <?php if (!empty($pregunta['imagen'])): 
+                    $imgSrc = (strpos($pregunta['imagen'], 'http') === 0) ? $pregunta['imagen'] : "assets/images/" . $pregunta['imagen'];
+                ?>
+                    <img src="<?= htmlspecialchars($imgSrc) ?>" class="q-image" alt="Imagen Referencia">
                 <?php endif; ?>
 
                 <div class="option-group">
@@ -68,8 +70,10 @@ include 'includes/header.php';
                                 <div class="option-circle"></div>
                                 <span><?= htmlspecialchars($respuesta['texto']) ?></span>
 
-                                <?php if (!empty($respuesta['imagen'])): ?>
-                                    <img src="assets/images/<?= htmlspecialchars($respuesta['imagen']) ?>" class="option-img">
+                                <?php if (!empty($respuesta['imagen'])): 
+                                    $optImgSrc = (strpos($respuesta['imagen'], 'http') === 0) ? $respuesta['imagen'] : "assets/images/" . $respuesta['imagen'];
+                                ?>
+                                    <img src="<?= htmlspecialchars($optImgSrc) ?>" class="option-img">
                                 <?php endif; ?>
 
                             </div>
