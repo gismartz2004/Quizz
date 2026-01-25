@@ -2,10 +2,10 @@
 // db.php - Conexión a Neon.tech (PostgreSQL)
 
 // Tus credenciales de Neon
-$host = 'ep-mute-base-aduqpged-pooler.c-2.us-east-1.aws.neon.tech';
+$host = 'ep-blue-truth-ahcz1w5w-pooler.c-3.us-east-1.aws.neon.tech';
 $db   = 'neondb';
 $user = 'neondb_owner';
-$pass = 'npg_ykdPhQnR50gZ';
+$pass = 'npg_CeXy8lP4Sphx';
 $port = '5432';
 
 try {
