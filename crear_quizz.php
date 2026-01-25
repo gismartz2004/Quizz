@@ -66,18 +66,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
         foreach ($textos as $i => $textoPregunta) {
             if (trim($textoPregunta) === '') continue;
 
+            $requiere_just = isset($_POST['pregunta_justificada'][$i]) ? 'true' : 'false';
+
             echo "\n";
 
-            // Corregido: 'false' como string para el booleano
+            // Corregido: Usar el valor del checkbox
             $sqlPregunta = "INSERT INTO preguntas (
                 quiz_id, texto, valor, requiere_justificacion
-            ) VALUES (?, ?, ?, 'false') RETURNING id";
+            ) VALUES (?, ?, ?, ?) RETURNING id";
             
             $stmtP = $pdo->prepare($sqlPregunta);
             $stmtP->execute([
                 $quiz_id,
                 trim($textoPregunta),
-                (int)($valores[$i] ?? 10)
+                (int)($valores[$i] ?? 10),
+                $requiere_just
             ]);
             
             $pregunta_id = $stmtP->fetchColumn();
@@ -273,6 +276,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
                         <label>Imagen (Opcional)</label>
                         <input type="file" name="pregunta_imagen[${pIndex}]" accept="image/*">
                     </div>
+                </div>
+
+                <div class="form-group" style="background: #eef2ff; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                    <label style="cursor:pointer; display:flex; align-items:center; gap:8px; margin:0;">
+                        <input type="checkbox" name="pregunta_justificada[${pIndex}]" value="1" style="width:18px; height:18px;">
+                        <span>¿Solicitar justificación obligatoria para esta pregunta?</span>
+                    </label>
                 </div>
 
                 <div class="form-group">

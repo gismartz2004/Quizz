@@ -212,16 +212,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
         $respuestasTexto = isset($_POST['respuesta_texto']) ? array_values($_POST['respuesta_texto']) : [];
         $respuestasCorr  = isset($_POST['respuesta_correcta']) ? array_values($_POST['respuesta_correcta']) : [];
 
-        $stmtPregunta = $pdo->prepare("INSERT INTO preguntas (quiz_id, texto, valor) VALUES (?, ?, ?)");
+        $stmtPregunta = $pdo->prepare("INSERT INTO preguntas (quiz_id, texto, valor, requiere_justificacion) VALUES (?, ?, ?, ?)");
         $stmtRespuesta = $pdo->prepare("INSERT INTO opciones (pregunta_id, texto, es_correcta) VALUES (?, ?, ?)");
 
         foreach ($preguntasTexto as $i => $textoPregunta) {
             if (trim($textoPregunta) === '') continue;
 
             $valorPregunta = (int)($preguntasValor[$i] ?? 0);
+            $requiere_just = isset($_POST['pregunta_justificada'][$i]) ? 'true' : 'false';
 
             // Insertar pregunta
-            $stmtPregunta->execute([$quiz_id, $textoPregunta, $valorPregunta]);
+            $stmtPregunta->execute([$quiz_id, $textoPregunta, $valorPregunta, $requiere_just]);
             $pregunta_id = $pdo->lastInsertId();
 
             if (!$pregunta_id) {
@@ -417,6 +418,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
                         </div>
                         <div class="form-group"><label>Imagen (Opcional)</label><input type="file" name="pregunta_imagen[]"></div>
                         
+                        <div class="form-group" style="background: #f0f4ff; padding: 10px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #4f46e5;">
+                            <label style="cursor:pointer; display:flex; align-items:center; gap:8px; margin:0;">
+                                <input type="checkbox" name="pregunta_justificada[<?php echo $idx; ?>]" value="1" style="width:18px; height:18px;">
+                                <span style="font-weight:600; color:#1e293b;">¿Solicitar justificación obligatoria?</span>
+                            </label>
+                        </div>
+                        
                         <label style="font-size:0.8rem; font-weight:600; color:#64748b;">RESPUESTAS</label>
                         <div class="respuestas-wrapper">
                             <?php foreach ($preg['respuestas'] as $rIdx => $resp): ?>
@@ -459,6 +467,12 @@ $(document).ready(function() {
                     <div class="form-group"><label>Puntos</label><input type="number" name="pregunta_valor[]" value="10" style="width: 100px;"></div>
                 </div>
                 <div class="form-group"><label>Imagen (Opcional)</label><input type="file" name="pregunta_imagen[]"></div>
+                <div class="form-group" style="background: #f0f4ff; padding: 10px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #4f46e5;">
+                    <label style="cursor:pointer; display:flex; align-items:center; gap:8px; margin:0;">
+                        <input type="checkbox" name="pregunta_justificada[${newIndex}]" value="1" style="width:18px; height:18px;">
+                        <span style="font-weight:600; color:#1e293b;">¿Solicitar justificación obligatoria?</span>
+                    </label>
+                </div>
                 <label style="font-size:0.8rem; font-weight:600; color:#64748b;">RESPUESTAS</label>
                 <div class="respuestas-wrapper">
                     <div class="respuesta-row">
