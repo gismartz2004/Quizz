@@ -110,6 +110,44 @@ function generarPreguntasIA($tema, $apiKey) {
     return $json['candidates'][0]['content']['parts'][0]['text'] ?? "";
 }
 
+function estructurarTextoConIA($textoBruto, $apiKey) {
+    if (empty(trim($textoBruto))) return "";
+
+    $modelo = "models/gemini-2.0-flash"; // Modelo rápido y capaz
+    $url = "https://generativelanguage.googleapis.com/v1beta/$modelo:generateContent?key=$apiKey";
+
+    $prompt = "El siguiente texto proviene de la extracción de un PDF de un examen. 
+    Tu tarea es LIMPIARLO y REESTRUCTURARLO exactamente en este formato:
+    1. Pregunta 1
+    Opción 1
+    *Opción correcta (marca con un asterisco al inicio)
+    Opción 3
+    ...
+    
+    REGLAS ESTRICTAS:
+    - Recupera el texto que parezca cortado o mal formateado.
+    - Asegúrate de que cada pregunta tenga sus opciones.
+    - Mantén el contenido original pero corrígelo si faltan espacios o letras por la extracción.
+    - Devuelve SOLO el texto plano formateado, sin explicaciones ni markdown.
+
+    TEXTO DEL PDF:
+    $textoBruto";
+
+    $data = ["contents" => [["parts" => [["text" => $prompt]]]]];
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    $json = json_decode($response, true);
+    return $json['candidates'][0]['content']['parts'][0]['text'] ?? $textoBruto;
+}
+
 // ==========================================
 // 3. VARIABLES INICIALES
 // ==========================================
@@ -133,10 +171,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file']) && $_FIL
             $text = mb_convert_encoding($text, 'UTF-8', 'auto');
         }
 
-        $preguntasGeneradas = procesarTextoCuestionario($text);
+        // --- NUEVA LÓGICA: USAR IA PARA ESTRUCTURAR EL TEXTO DEL PDF ---
+        $textoLimpio = estructurarTextoConIA($text, $geminiApiKey);
+        $preguntasGeneradas = procesarTextoCuestionario($textoLimpio);
 
         if (count($preguntasGeneradas) > 0) {
-            $mensaje = "PDF procesado con éxito: " . count($preguntasGeneradas) . " preguntas extraídas.";
+            $mensaje = "PDF mejorado con IA: " . count($preguntasGeneradas) . " preguntas procesadas con éxito.";
             $tipoMensaje = 'success';
         } else {
             $mensaje = "El PDF fue leído, pero no se detectaron preguntas válidas.";
