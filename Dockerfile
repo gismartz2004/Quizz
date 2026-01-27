@@ -10,6 +10,15 @@ RUN apt-get update && apt-get install -y \
     && a2enmod rewrite \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# 1.5 Configure PHP for performance
+RUN { \
+        echo 'memory_limit=512M'; \
+        echo 'upload_max_filesize=100M'; \
+        echo 'post_max_size=100M'; \
+        echo 'max_execution_time=300'; \
+        echo 'date.timezone=America/Guayaquil'; \
+    } > /usr/local/etc/php/conf.d/docker-php-config.ini
+
 # 2. Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 

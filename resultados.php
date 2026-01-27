@@ -33,34 +33,49 @@ $quizData = $stmtQ->fetch(PDO::FETCH_ASSOC);
 
 if (!$quizData) die('Error: Quiz no encontrado.');
 
-// 2. Obtener Preguntas y Respuestas Correctas de BD
+// 2. Obtener Preguntas y todas las Opciones de una sola vez
 $stmtP = $pdo->prepare("SELECT * FROM preguntas WHERE quiz_id = ?");
 $stmtP->execute([$quizId]);
 $preguntasDB = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
+// Mapear preguntas por ID para acceso rápido
+$preguntasMap = [];
+$preguntaIds = [];
+foreach ($preguntasDB as $p) {
+    $preguntasMap[$p['id']] = $p;
+    $preguntaIds[] = $p['id'];
+}
+
 $respuestasUsuario = $_POST['respuesta'] ?? [];
 $puntosObtenidos = 0;
-// $detallesPantalla ya no es necesario para la vista, pero calculamos puntos para guardar
 
-// 3. Calcular Nota
-foreach ($preguntasDB as $pregunta) {
-    $idPregunta = $pregunta['id'];
-    $respuestaUserId = $respuestasUsuario[$idPregunta] ?? null;
-    
-    // Buscar opciones de esta pregunta
-    $stmtO = $pdo->prepare("SELECT * FROM opciones WHERE pregunta_id = ?");
-    $stmtO->execute([$idPregunta]);
-    $opciones = $stmtO->fetchAll(PDO::FETCH_ASSOC);
-    
-    $esCorrecta = false;
-    foreach ($opciones as $op) {
-        if ($op['es_correcta'] && $op['id'] == $respuestaUserId) {
-            $esCorrecta = true;
-            break;
-        }
+if (!empty($preguntaIds)) {
+    // Obtener TODAS las opciones para estas preguntas de una sola vez
+    $placeholders = implode(',', array_fill(0, count($preguntaIds), '?'));
+    $stmtO = $pdo->prepare("SELECT id, pregunta_id, es_correcta FROM opciones WHERE pregunta_id IN ($placeholders)");
+    $stmtO->execute($preguntaIds);
+    $allOpciones = $stmtO->fetchAll(PDO::FETCH_ASSOC);
+
+    // Agrupar opciones por pregunta
+    $opcionesMap = [];
+    foreach ($allOpciones as $op) {
+        $opcionesMap[$op['pregunta_id']][] = $op;
     }
 
-    if ($esCorrecta) $puntosObtenidos += $pregunta['valor'];
+    // 3. Calcular Nota Eficientemente
+    foreach ($preguntasDB as $pregunta) {
+        $idPregunta = $pregunta['id'];
+        $respuestaUserId = $respuestasUsuario[$idPregunta] ?? null;
+        
+        if ($respuestaUserId && isset($opcionesMap[$idPregunta])) {
+            foreach ($opcionesMap[$idPregunta] as $op) {
+                if ($op['es_correcta'] && $op['id'] == $respuestaUserId) {
+                    $puntosObtenidos += $pregunta['valor'];
+                    break;
+                }
+            }
+        }
+    }
 }
 
 $porcentaje = ($quizData['valor_total'] > 0) ? round(($puntosObtenidos / $quizData['valor_total']) * 100) : 0;
@@ -109,35 +124,23 @@ try {
     unset($_SESSION['quiz_questions_' . $quizId]); // Limpiar orden preguntas
 
     // ----------------------------------------------------------
-    // 5. GUARDAR DETALLE DE RESPUESTAS (Justificaciones)
-    // ----------------------------------------------------------
+    // 5. GUARDAR DETALLE DE RESPUESTAS (Inserción masiva/Batch)
     $resultadoId = $pdo->lastInsertId();
-
-    // Crear tabla si no existe (Idealmente esto debería ir en un script de migración)
-    // $pdo->exec("CREATE TABLE IF NOT EXISTS respuestas_usuarios (
-    //     id SERIAL PRIMARY KEY,
-    //     resultado_id INTEGER NOT NULL,
-    //     pregunta_id INTEGER NOT NULL,
-    //     opcion_id INTEGER,
-    //     justificacion TEXT,
-    //     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    //     FOREIGN KEY (resultado_id) REFERENCES resultados(id) ON DELETE CASCADE
-    // )");
-
-    $stmtDetalle = $pdo->prepare("INSERT INTO respuestas_usuarios (resultado_id, pregunta_id, opcion_id, justificacion) VALUES (?, ?, ?, ?)");
-
-    // Guardar cada respuesta
-    // $respuestasUsuario tiene [pregunta_id => opcion_id]
     $justificaciones = $_POST['justificacion'] ?? [];
 
-    foreach ($respuestasUsuario as $pregId => $opId) {
-        $justTexto = isset($justificaciones[$pregId]) ? trim($justificaciones[$pregId]) : null;
-        $stmtDetalle->execute([
-            $resultadoId,
-            $pregId,
-            $opId,
-            $justTexto
-        ]);
+    if (!empty($respuestasUsuario)) {
+        $sqlBatch = "INSERT INTO respuestas_usuarios (resultado_id, pregunta_id, opcion_id, justificacion) VALUES ";
+        $placeholdersBatch = [];
+        $valuesBatch = [];
+
+        foreach ($respuestasUsuario as $pregId => $opId) {
+            $justTexto = isset($justificaciones[$pregId]) ? trim($justificaciones[$pregId]) : null;
+            $placeholdersBatch[] = "(?, ?, ?, ?)";
+            array_push($valuesBatch, $resultadoId, $pregId, $opId, $justTexto);
+        }
+
+        $stmtBatch = $pdo->prepare($sqlBatch . implode(", ", $placeholdersBatch));
+        $stmtBatch->execute($valuesBatch);
     }
 
     $pdo->commit();

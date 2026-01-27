@@ -84,69 +84,76 @@ function procesarTextoCuestionario($text) {
     return $preguntas;
 }
 
-function generarPreguntasIA($tema, $apiKey) {
-    $modelo = "models/gemini-2.5-flash"; 
+// --- NUEVAS FUNCIONES DE IA BASADAS EN JSON ---
+
+function llamarGeminiJSON($prompt, $apiKey) {
+    $modelo = "models/gemini-2.0-flash";
     $url = "https://generativelanguage.googleapis.com/v1beta/$modelo:generateContent?key=$apiKey";
 
-    $prompt = "Genera 5 preguntas de opción múltiple sobre '$tema'.
-    REGLAS:
-    - La respuesta correcta debe iniciar con (*)
-    - No usar letras A), B), etc.
-    - No usar markdown.";
-
-    $data = ["contents" => [["parts" => [["text" => $prompt]]]]];
+    // Simplificación extrema del esquema para evitar rechazos por parte de la API
+    $data = [
+        "contents" => [["parts" => [["text" => $prompt]]]],
+        "generationConfig" => [
+            "response_mime_type" => "application/json"
+        ]
+    ];
 
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30); // Timeout de 30s
 
     $response = curl_exec($ch);
-    if (curl_errno($ch)) return "Error cURL: " . curl_error($ch);
+    if (curl_errno($ch)) {
+        error_log("CURL Error: " . curl_error($ch));
+        return null;
+    }
     curl_close($ch);
 
     $json = json_decode($response, true);
-    return $json['candidates'][0]['content']['parts'][0]['text'] ?? "";
-}
+    if (isset($json['error'])) {
+        error_log("Gemini Server Error: " . json_encode($json['error']));
+        return null;
+    }
 
-function estructurarTextoConIA($textoBruto, $apiKey) {
-    if (empty(trim($textoBruto))) return "";
+    $textResponse = $json['candidates'][0]['content']['parts'][0]['text'] ?? null;
+    if (!$textResponse) return null;
 
-    $modelo = "models/gemini-2.0-flash"; // Modelo rápido y capaz
-    $url = "https://generativelanguage.googleapis.com/v1beta/$modelo:generateContent?key=$apiKey";
+    $textResponse = trim($textResponse);
+    // Limpiar backticks si existen
+    if (preg_match('/^```json\s*(.*)\s*```$/s', $textResponse, $matches)) {
+        $textResponse = $matches[1];
+    }
 
-    $prompt = "El siguiente texto proviene de la extracción de un PDF de un examen. 
-    Tu tarea es LIMPIARLO y REESTRUCTURARLO exactamente en este formato:
-    1. Pregunta 1
-    Opción 1
-    *Opción correcta (marca con un asterisco al inicio)
-    Opción 3
-    ...
+    $decoded = json_decode(trim($textResponse), true);
     
-    REGLAS ESTRICTAS:
-    - Recupera el texto que parezca cortado o mal formateado.
-    - Asegúrate de que cada pregunta tenga sus opciones.
-    - Mantén el contenido original pero corrígelo si faltan espacios o letras por la extracción.
-    - Devuelve SOLO el texto plano formateado, sin explicaciones ni markdown.
+    // Normalizar llaves
+    if (isset($decoded['preguntas'])) return $decoded['preguntas'];
+    if (isset($decoded['questions'])) return $decoded['questions'];
+    if (is_array($decoded) && isset($decoded[0]['texto'])) return $decoded; // Es el array directo
 
-    TEXTO DEL PDF:
-    $textoBruto";
-
-    $data = ["contents" => [["parts" => [["text" => $prompt]]]]];
-
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-
-    $response = curl_exec($ch);
-    curl_close($ch);
-
-    $json = json_decode($response, true);
-    return $json['candidates'][0]['content']['parts'][0]['text'] ?? $textoBruto;
+    return null;
 }
+
+function generarPreguntasIA($tema, $apiKey) {
+    $prompt = "Genera un JSON con una lista de 5 preguntas de opción múltiple sobre: '$tema'. 
+               Formato esperado: { \"preguntas\": [ { \"texto\": \"...\", \"valor\": 10, \"respuestas\": [ {\"texto\": \"...\", \"correcta\": true/false} ] } ] }";
+    return llamarGeminiJSON($prompt, $apiKey);
+}
+
+function extraerPreguntasDePDF($textoPDF, $apiKey) {
+    $prompt = "Analiza este texto de un examen extraído de un PDF y estructúralo en un JSON. 
+               Recupera frases cortadas y limpia el ruido.
+               Formato: { \"preguntas\": [ { \"texto\": \"...\", \"valor\": 10, \"respuestas\": [ {\"texto\": \"...\", \"correcta\": true/false} ] } ] }
+               
+               TEXTO DEL PDF:
+               $textoPDF";
+    return llamarGeminiJSON($prompt, $apiKey);
+}
+
+// (Old structured function removed in favor of direct JSON extraction)
 
 // ==========================================
 // 3. VARIABLES INICIALES
@@ -171,16 +178,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file']) && $_FIL
             $text = mb_convert_encoding($text, 'UTF-8', 'auto');
         }
 
-        // --- NUEVA LÓGICA: USAR IA PARA ESTRUCTURAR EL TEXTO DEL PDF ---
-        $textoLimpio = estructurarTextoConIA($text, $geminiApiKey);
-        $preguntasGeneradas = procesarTextoCuestionario($textoLimpio);
+        // --- PASO 1: INTENTAR CON IA (EXTRACCIÓN INTELIGENTE) ---
+        $dataPDF = extraerPreguntasDePDF($text, $geminiApiKey);
 
-        if (count($preguntasGeneradas) > 0) {
-            $mensaje = "PDF mejorado con IA: " . count($preguntasGeneradas) . " preguntas procesadas con éxito.";
+        if ($dataPDF && !empty($dataPDF)) {
+            $preguntasGeneradas = $dataPDF;
+            $mensaje = "PDF procesado con IA: " . count($preguntasGeneradas) . " preguntas extraídas.";
             $tipoMensaje = 'success';
         } else {
-            $mensaje = "El PDF fue leído, pero no se detectaron preguntas válidas.";
-            $tipoMensaje = 'warning';
+            // --- PASO 2: FALLBACK A EXTRACCIÓN POR REGEX (PARA ARCHIVOS SIMPLES O FALLO DE API) ---
+            $preguntasGeneradas = procesarTextoCuestionario($text);
+            
+            if (!empty($preguntasGeneradas)) {
+                $mensaje = "Extracción por IA falló, pero se recuperaron " . count($preguntasGeneradas) . " preguntas usando el motor básico.";
+                $tipoMensaje = 'warning';
+            } else {
+                $mensaje = "No se pudieron detectar preguntas en el PDF. Asegúrate de que tenga un formato claro.";
+                $tipoMensaje = 'error';
+            }
         }
 
     } catch (Exception $e) {
@@ -195,13 +210,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['pdf_file']) && $_FIL
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generar_ia'])) {
     $tema = $_POST['tema_ia'];
-    $textoIA = generarPreguntasIA($tema, $geminiApiKey);
+    $dataIA = generarPreguntasIA($tema, $geminiApiKey);
 
-    if (strpos($textoIA, "Error") === 0) {
-        $mensaje = $textoIA;
-        $tipoMensaje = 'error';
+    if (!$dataIA || empty($dataIA['preguntas'])) {
+        $mensaje = "Error al conectar con la IA."; $tipoMensaje = 'error';
     } else {
-        $preguntasGeneradas = procesarTextoCuestionario($textoIA);
+        $preguntasGeneradas = $dataIA['preguntas'];
         $mensaje = "IA generó " . count($preguntasGeneradas) . " preguntas.";
         $tipoMensaje = 'success';
         $titulo = "Quiz sobre " . ucfirst($tema);
@@ -223,11 +237,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
 
         // Insertar quiz
         $stmt = $pdo->prepare(
-            "INSERT INTO quizzes (titulo, descripcion, color_primario, color_secundario, valor_total, fecha_inicio, fecha_fin, duracion_minutos, creado_por)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO quizzes (titulo, descripcion, color_primario, color_secundario, valor_total, fecha_inicio, fecha_fin, duracion_minutos, creado_por, es_nne)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
 
         $creado_por = $_SESSION['usuario']['id'] ?? 1;
+        $es_nne = isset($_POST['es_nne']) ? 'true' : 'false';
 
         $stmt->execute([
             trim($_POST['titulo']),
@@ -238,7 +253,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
             $_POST['fecha_inicio'] ?: null,
             $_POST['fecha_fin'] ?: null,
             (int)$_POST['duracion_minutos'],
-            (int)$creado_por
+            (int)$creado_por,
+            $es_nne
         ]);
 
         $quiz_id = $pdo->lastInsertId();
@@ -421,6 +437,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_quiz'])) {
         <div class="form-group">
             <label>Descripción</label>
             <textarea name="descripcion" rows="3" placeholder="Instrucciones..."><?php echo htmlspecialchars($descripcion); ?></textarea>
+        </div>
+
+        <div class="form-group" style="background: #fff7ed; padding: 15px; border-radius: 10px; border: 1px solid #fed7aa; margin-bottom: 25px;">
+            <label style="cursor:pointer; display:flex; align-items:center; gap:10px; margin:0;">
+                <input type="checkbox" name="es_nne" value="1" style="width:20px; height:20px;">
+                <div>
+                    <span style="font-weight:700; color:#9a3412;">Examen Privado (Solo NNE)</span>
+                    <p style="margin:0; font-size:0.8rem; color:#c2410c;">Este examen no aparecerá en el portal general. Los estudiantes solo podrán entrar con el enlace directo.</p>
+                </div>
+            </label>
         </div>
 
         <div class="config-section">

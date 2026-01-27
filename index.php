@@ -140,9 +140,12 @@ if (isset($_GET['quiz'])) {
 // MODO DASHBOARD
 // ==========================================================
 } else {
-    // Obtener quizzes desde BD
+    // Obtener quizzes desde BD (No-NNE)
     try {
-        $stmt = $pdo->query("SELECT *, (SELECT COUNT(*) FROM preguntas WHERE quiz_id = quizzes.id) as cantidad_preguntas FROM quizzes ORDER BY id DESC");
+        $stmt = $pdo->query("SELECT *, (SELECT COUNT(*) FROM preguntas WHERE quiz_id = quizzes.id) as cantidad_preguntas 
+                             FROM quizzes 
+                             WHERE COALESCE(es_nne, false) = false
+                             ORDER BY id DESC");
         $quizzes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) { $quizzes = []; }
     

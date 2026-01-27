@@ -35,8 +35,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Actualizar quiz
         $stmt = $pdo->prepare("UPDATE quizzes SET 
             titulo = ?, descripcion = ?, color_primario = ?, color_secundario = ?, 
-            valor_total = ?, duracion_minutos = ?, fecha_inicio = ?, fecha_fin = ? 
+            valor_total = ?, duracion_minutos = ?, fecha_inicio = ?, fecha_fin = ?,
+            es_nne = ?
             WHERE id = ?");
+        
+        $es_nne = isset($_POST['es_nne']) ? 'true' : 'false';
+
         $stmt->execute([
             $_POST['titulo'],
             $_POST['descripcion'],
@@ -46,6 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             (int)$_POST['duracion_minutos'],
             $f_inicio,
             $f_fin,
+            $es_nne,
             $id
         ]);
 
@@ -174,6 +179,16 @@ foreach ($preguntas as &$p) {
             <div class="form-group">
                 <label>Descripción</label>
                 <textarea name="descripcion" rows="2"><?= htmlspecialchars($quiz['descripcion']) ?></textarea>
+            </div>
+
+            <div class="form-group" style="background: #fff7ed; padding: 15px; border-radius: 10px; border: 1px solid #fed7aa; margin-bottom: 25px;">
+                <label style="cursor:pointer; display:flex; align-items:center; gap:10px; margin:0;">
+                    <input type="checkbox" name="es_nne" value="1" <?= !empty($quiz['es_nne']) ? 'checked' : '' ?> style="width:20px; height:20px;">
+                    <div>
+                        <span style="font-weight:700; color:#9a3412;">Examen Privado (Solo NNE)</span>
+                        <p style="margin:0; font-size:0.8rem; color:#c2410c;">Este examen no aparecerá en el portal general. Los estudiantes solo podrán entrar con el enlace directo.</p>
+                    </div>
+                </label>
             </div>
             <div class="grid-2">
                 <div class="form-group">

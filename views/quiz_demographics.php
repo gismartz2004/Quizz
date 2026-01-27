@@ -30,7 +30,7 @@ include 'includes/header.php';
 
             <label>Grado</label>
             <select name="grado" required>
-                <option value="Decimo" selected>Décimo</option>
+                <option value="Septimo" selected>Séptimo</option>
             </select>
 
             <label>Paralelo</label>

@@ -16,6 +16,9 @@
         <a href="<?php echo isset($base_path) ? $base_path : ''; ?>lenguaje_d.php" class="nav-item <?php echo (isset($page) && $page == 'resultados') ? 'active' : ''; ?>">
             <i class="fas fa-chart-bar"></i> Resultados
         </a>
+        <a href="<?php echo isset($base_path) ? $base_path : ''; ?>nne.php" class="nav-item <?php echo (isset($page) && $page == 'nne') ? 'active' : ''; ?>">
+            <i class="fas fa-lock"></i> Exámenes NNE
+        </a>
         <a href="<?php echo isset($base_path) ? $base_path : ''; ?>logout.php" class="nav-item logout" style="margin-top: 20px; color: #ef4444;">
             <i class="fas fa-sign-out-alt"></i> Salir
         </a>

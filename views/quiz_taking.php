@@ -103,13 +103,21 @@ include 'includes/header.php';
 
         <!-- SUBMIT BUTTON -->
         <div class="bottom-bar">
-            <button type="submit" class="btn-finish"
-                onclick="return confirm('¿Estás seguro de enviar tus respuestas?')">
+            <button type="button" id="submitQuizBtn" class="btn-finish">
                 <i class="fas fa-paper-plane"></i> Enviar Evaluación
             </button>
         </div>
 
     </form>
+</div>
+
+<!-- RETRY OVERLAY (HIDDEN BY DEFAULT) -->
+<div id="retry-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:100000; flex-direction:column; justify-content:center; align-items:center; text-align:center; color:white; padding:20px;">
+    <div style="font-size:4rem; color:#fbbc04; margin-bottom:20px;"><i class="fas fa-exclamation-triangle"></i></div>
+    <h2 style="margin:0 0 10px 0;">El servidor está muy ocupado</h2>
+    <p style="font-size:1.1rem; max-width:500px; line-height:1.5; color:#cbd5e1;">No te preocupes, tus respuestas están seguras en este dispositivo. Estamos intentando enviarlas de nuevo automáticamente...</p>
+    <div id="retry-timer" style="font-weight:bold; font-size:1.2rem; margin-top:20px; background:rgba(255,255,255,0.1); padding:10px 20px; border-radius:50px;">Reintentando en 5s...</div>
+    <button onclick="sendQuizData()" style="margin-top:30px; background:#4f46e5; color:white; border:none; padding:12px 30px; border-radius:8px; cursor:pointer; font-weight:bold;">Intentar ahora mismo</button>
 </div>
 
 <!-- SUBMISSION OVERLAY -->
@@ -247,15 +255,63 @@ ob_start();
         document.getElementById('progressText').innerText = `${answered} / ${totalQuestions}`;
     }
 
-    // SUBMISSION OVERLAY
-    quizForm.addEventListener('submit', function(e) {
-        // Clear local storage on submit
-        localStorage.removeItem('quiz_answers_<?= $quizId ?>');
-        
-        e.preventDefault();
-        document.getElementById('submission-overlay').style.display = 'flex';
-        setTimeout(() => this.submit(), 50);
+    // SUBMISSION LOGIC WITH RETRIES
+    const submitBtn = document.getElementById('submitQuizBtn');
+    const submissionOverlay = document.getElementById('submission-overlay');
+    const retryOverlay = document.getElementById('retry-overlay');
+    const retryTimerDisp = document.getElementById('retry-timer');
+
+    let retrySeconds = 5;
+    let retryInterval = null;
+
+    submitBtn.addEventListener('click', function() {
+        if (confirm('¿Estás seguro de enviar tus respuestas?')) {
+            sendQuizData();
+        }
     });
+
+    async function sendQuizData() {
+        submissionOverlay.style.display = 'flex';
+        retryOverlay.style.display = 'none';
+        if (retryInterval) clearInterval(retryInterval);
+
+        const formData = new FormData(quizForm);
+
+        try {
+            const response = await fetch(quizForm.action, {
+                method: 'POST',
+                body: formData
+            });
+
+            const html = await response.text();
+
+            if (response.ok && html.includes('¡Examen Finalizado!')) {
+                // SUCCESS: Clear everything and show completion page
+                localStorage.removeItem(STORAGE_KEY);
+                document.body.innerHTML = html; // Replace content with success view
+                window.scrollTo(0,0);
+            } else {
+                throw new Error('Server Busy');
+            }
+        } catch (error) {
+            console.error('Submission Error:', error);
+            showRetryOverlay();
+        }
+    }
+
+    function showRetryOverlay() {
+        submissionOverlay.style.display = 'none';
+        retryOverlay.style.display = 'flex';
+        retrySeconds = 5;
+        
+        retryInterval = setInterval(() => {
+            retrySeconds--;
+            retryTimerDisp.innerText = `Reintentando en ${retrySeconds}s...`;
+            if (retrySeconds <= 0) {
+                sendQuizData();
+            }
+        }, 1000);
+    }
 
     // KEEP ALIVE SESSION
     // Ping al servidor cada 5 minutos (300000 ms) para evitar que la sesión caduque
