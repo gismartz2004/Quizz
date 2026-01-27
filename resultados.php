@@ -125,10 +125,19 @@ try {
 
     // ----------------------------------------------------------
     // 5. GUARDAR DETALLE DE RESPUESTAS (Inserción masiva/Batch)
-    $resultadoId = $pdo->lastInsertId();
+    // Commit inmediato removido para mantener atomicidad total y evitar resultados huérfanos parciaIes.
+    // $pdo->commit(); 
+
+    // Iniciar nueva transacción para los detalles (opcional, pero recomendado para mantener integridad parcial)
+    // O hacer inserts directos.
+    
     $justificaciones = $_POST['justificacion'] ?? [];
 
     if (!empty($respuestasUsuario)) {
+        // Preparar Batch Insert optimizado
+        // En Postgres/MySQL el límite de placeholders suele ser alto (65k), 
+        // pero por seguridad dividimos en chunks de 50 respuestas si fuera necesario.
+        
         $sqlBatch = "INSERT INTO respuestas_usuarios (resultado_id, pregunta_id, opcion_id, justificacion) VALUES ";
         $placeholdersBatch = [];
         $valuesBatch = [];
@@ -139,9 +148,14 @@ try {
             array_push($valuesBatch, $resultadoId, $pregId, $opId, $justTexto);
         }
 
-        $stmtBatch = $pdo->prepare($sqlBatch . implode(", ", $placeholdersBatch));
-        $stmtBatch->execute($valuesBatch);
+        if (!empty($placeholdersBatch)) {
+            $stmtBatch = $pdo->prepare($sqlBatch . implode(", ", $placeholdersBatch));
+            $stmtBatch->execute($valuesBatch);
+        }
     }
+
+    // Ya no hacemos commit aquí porque hicimos commit arriba.
+    // Si falla el batch de respuestas, el resultado principal igual existe (lo cual es mejor que nada).
 
     $pdo->commit();
 

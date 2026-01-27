@@ -10,13 +10,22 @@ RUN apt-get update && apt-get install -y \
     && a2enmod rewrite \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# 1.2 Tune Apache for High Concurrency
+# Increase ServerLimit and MaxRequestWorkers to handle ~400 concurrents per instance (assuming appropriate RAM)
+RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf \
+    && sed -i 's/StartServers.*/StartServers 5/g' /etc/apache2/mods-available/mpm_prefork.conf \
+    && sed -i 's/MinSpareServers.*/MinSpareServers 5/g' /etc/apache2/mods-available/mpm_prefork.conf \
+    && sed -i 's/MaxSpareServers.*/MaxSpareServers 10/g' /etc/apache2/mods-available/mpm_prefork.conf \
+    && sed -i 's/MaxRequestWorkers.*/MaxRequestWorkers 400/g' /etc/apache2/mods-available/mpm_prefork.conf \
+    && sed -i 's/MaxConnectionsPerChild.*/MaxConnectionsPerChild 0/g' /etc/apache2/mods-available/mpm_prefork.conf
+
 # 1.5 Configure PHP for performance
 RUN { \
-        echo 'memory_limit=512M'; \
-        echo 'upload_max_filesize=100M'; \
-        echo 'post_max_size=100M'; \
-        echo 'max_execution_time=300'; \
-        echo 'date.timezone=America/Guayaquil'; \
+    echo 'memory_limit=512M'; \
+    echo 'upload_max_filesize=100M'; \
+    echo 'post_max_size=100M'; \
+    echo 'max_execution_time=300'; \
+    echo 'date.timezone=America/Guayaquil'; \
     } > /usr/local/etc/php/conf.d/docker-php-config.ini
 
 # 2. Install Composer

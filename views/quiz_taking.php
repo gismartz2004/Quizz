@@ -148,6 +148,7 @@ include 'includes/header.php';
 $jsTimerLeft = $tiempoRestante;
 $jsTotalQuestions = count($preguntasMostrar);
 $jsQuizTitle = htmlspecialchars($quizData['titulo']);
+$jsUserId = $usuario['id']; // Inject User ID
 
 ob_start();
 ?>
@@ -322,10 +323,26 @@ ob_start();
     // ======================================================
     // PERSISTENCIA LOCAL (LOCAL STORAGE)
     // ======================================================
-    const STORAGE_KEY = 'quiz_answers_<?= $quizId ?>';
+    const USER_ID = <?= $jsUserId ?>;
+    const QUIZ_ID = <?= $quizId ?>;
+    
+    // Nueva llave única por usuario
+    const STORAGE_KEY = `quiz_answers_${QUIZ_ID}_${USER_ID}`;
+    const OLD_STORAGE_KEY = `quiz_answers_${QUIZ_ID}`; // La llave antigua insegura
 
     // 1. Cargar respuestas guardadas
     function loadSavedAnswers() {
+        // Migración/Limpieza: Si existe una llave antigua genérica y NO es mía (o por seguridad), la borramos
+        // Para evitar borrar datos útiles, solo borramos la antigua si NO tenemos datos nuevos
+        // O mejor: simplemente ignoramos la antigua y empezamos a usar la nueva.
+        
+        // Limpieza proactiva de la llave antigua para evitar confusión en el futuro
+        if (localStorage.getItem(OLD_STORAGE_KEY)) {
+            // Opcional: Podríamos intentar migrarla si creemos que es del usuario actual, 
+            // pero es arriesgado. Mejor empezar limpio para garantizar privacidad.
+            localStorage.removeItem(OLD_STORAGE_KEY);
+        }
+
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
             const answers = JSON.parse(saved);
