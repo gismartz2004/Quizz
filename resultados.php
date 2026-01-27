@@ -118,6 +118,7 @@ try {
         $segundos_fuera
     ]);
     
+    $resultadoId = $pdo->lastInsertId();
     // Limpiar sesión demográfica ya usada
     unset($_SESSION[$sessionDemoKey]);
     unset($_SESSION['quiz_start_' . $quizId . '_' . $usuario['id']]); // Limpiar timer

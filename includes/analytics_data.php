@@ -102,50 +102,76 @@ function calculateSectionStats($results) {
 }
 
 function analyzeSkillsDiff($pdo, $quiz_id = null) {
-    // Si no hay quiz seleccionado, no podemos analizar preguntas específicas fácilmente
-    // a menos que analicemos TODAS, pero sería una lista gigante.
-    // Retornamos vacío si no hay quiz_id específico o si es múltiple.
     if (!$quiz_id) return [];
 
     try {
         // Obtenemos preguntas y estadisticas de respuestas
+        // Usamos COALESCE para soportar calificacion manual y automatica
+        // Simplificamos la consulta para mayor compatibilidad
         $sql = "
-            SELECT p.id, p.texto, 
+            SELECT 
+                p.id, 
+                p.texto, 
                 COUNT(ru.id) as total_intentos,
                 SUM(CASE 
-                    WHEN ru.es_correcta_manual = TRUE THEN 1
-                    WHEN ru.es_correcta_manual IS NULL AND o.es_correcta = TRUE THEN 1
+                    WHEN ru.es_correcta_manual = true THEN 1
+                    WHEN ru.es_correcta_manual IS FALSE THEN 0
+                    WHEN ru.es_correcta = true THEN 1
                     ELSE 0 
                 END) as correctas,
                 (COUNT(ru.id) - SUM(CASE 
-                    WHEN ru.es_correcta_manual = TRUE THEN 1
-                    WHEN ru.es_correcta_manual IS NULL AND o.es_correcta = TRUE THEN 1
+                    WHEN ru.es_correcta_manual = true THEN 1
+                    WHEN ru.es_correcta_manual IS FALSE THEN 0
+                    WHEN ru.es_correcta = true THEN 1
                     ELSE 0 
                 END)) as incorrectas,
                 STRING_AGG(CASE 
-                    WHEN (ru.es_correcta_manual = TRUE OR (ru.es_correcta_manual IS NULL AND o.es_correcta = TRUE)) THEN NULL 
+                    WHEN (ru.es_correcta_manual = true OR (ru.es_correcta_manual IS NULL AND ru.es_correcta = true)) THEN NULL 
                     ELSE u.nombre 
                 END, ', ') as lista_errores
             FROM preguntas p
             LEFT JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id
-            LEFT JOIN opciones o ON ru.opcion_id = o.id
             LEFT JOIN resultados r ON ru.resultado_id = r.id
             LEFT JOIN usuarios u ON r.usuario_id = u.id
             WHERE p.quiz_id = :qid
             GROUP BY p.id, p.texto
             HAVING COUNT(ru.id) > 0
             ORDER BY (SUM(CASE 
-                    WHEN ru.es_correcta_manual = TRUE THEN 1
-                    WHEN ru.es_correcta_manual IS NULL AND o.es_correcta = TRUE THEN 1
+                    WHEN ru.es_correcta_manual = true THEN 1
+                    WHEN ru.es_correcta_manual IS FALSE THEN 0
+                    WHEN ru.es_correcta = true THEN 1
                     ELSE 0 
                 END)::float / NULLIF(COUNT(ru.id), 0)) ASC
             LIMIT 5
         ";
+        
         $stmt = $pdo->prepare($sql);
         $stmt->execute(['qid' => $quiz_id]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+
     } catch (Exception $e) {
-        return [];
+        // Si falla por columna inexistente (manual), intentamos version basica
+        try {
+            $sql_basic = "
+                SELECT 
+                    p.id, p.texto, 
+                    COUNT(ru.id) as total_intentos,
+                    SUM(CASE WHEN ru.es_correcta = true THEN 1 ELSE 0 END) as correctas,
+                    (COUNT(ru.id) - SUM(CASE WHEN ru.es_correcta = true THEN 1 ELSE 0 END)) as incorrectas,
+                    '' as lista_errores
+                FROM preguntas p
+                JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id
+                WHERE p.quiz_id = :qid
+                GROUP BY p.id, p.texto
+                ORDER BY (SUM(CASE WHEN ru.es_correcta = true THEN 1 ELSE 0 END)::float / NULLIF(COUNT(ru.id), 0)) ASC
+                LIMIT 5
+            ";
+            $stmt = $pdo->prepare($sql_basic);
+            $stmt->execute(['qid' => $quiz_id]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e2) {
+            return [];
+        }
     }
 }
 
