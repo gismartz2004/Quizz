@@ -34,8 +34,8 @@ $sql = "
     LEFT JOIN opciones o ON ru.opcion_id = o.id
     WHERE ru.resultado_id = :resultado_id
       AND (
-            p.requiere_justificacion = true 
-         OR p.requiere_justificacion = 'true'
+            p.requiere_justificacion IS TRUE 
+         OR p.requiere_justificacion::text IN ('true', 't', '1', 'on')
       )
       AND COALESCE(NULLIF(TRIM(ru.justificacion), ''), NULL) IS NOT NULL
     ORDER BY p.id ASC

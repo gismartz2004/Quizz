@@ -99,24 +99,44 @@ if (isset($_GET['quiz'])) {
         } else {
             // CASO NORMAL: Segmentación 50/50 y selección 23+2
             
-            // 2.1 SEPARAR LOS GRUPOS (Slicing)
-            $grupoA = array_slice($todasLasPreguntas, 0, 50); 
-            $grupoB = array_slice($todasLasPreguntas, 50); 
+            // 2.1 SEPARAR POR TIPO
+            $mcq = [];
+            $justified = [];
+            foreach ($todasLasPreguntas as $p) {
+                $rj = $p['requiere_justificacion'] ?? false;
+                $isJustified = ($rj === true || $rj === 'true' || $rj === 't' || $rj == 1 || $rj === '1' || $rj === 'on');
+                if ($isJustified) $justified[] = $p;
+                else $mcq[] = $p;
+            }
     
-            // 2.2 SELECCIONAR ALEATORIAS
-            shuffle($grupoA); 
-            $seleccionA = array_slice($grupoA, 0, 23);
-    
-            shuffle($grupoB); 
-            $seleccionB = array_slice($grupoB, 0, 2);
-    
-            // 2.3 UNIFICAR
-            // IMPORTANTE: Mezclar Solo el Grupo A para que el Grupo B quede siempre al final
-            shuffle($seleccionA);
-            // (Opcional) Mezclar el Grupo B entre sí
-            shuffle($seleccionB);
-    
+            // 2.2 SELECCIONAR CON BACKFILL PARA LLEGAR A 25
+            shuffle($mcq);
+            shuffle($justified);
+            
+            // Intentar 23 MCQ y 2 Justificadas
+            $seleccionA = array_slice($mcq, 0, 23);
+            $seleccionB = array_slice($justified, 0, 2);
+            
             $preguntasFinales = array_merge($seleccionA, $seleccionB);
+            
+            // Si nos faltan para llegar a 25, rellenar de lo que sobre
+            $faltantes = 25 - count($preguntasFinales);
+            if ($faltantes > 0) {
+                // Primero intentar rellenar con más MCQ
+                $extraMCQ = array_slice($mcq, 23, $faltantes);
+                $preguntasFinales = array_merge($preguntasFinales, $extraMCQ);
+                
+                $faltantes = 25 - count($preguntasFinales);
+                if ($faltantes > 0) {
+                    // Si aún falta, intentar rellenar con más Justificadas
+                    $extraJustified = array_slice($justified, 2, $faltantes);
+                    $preguntasFinales = array_merge($preguntasFinales, $extraJustified);
+                }
+            }
+            
+            // Opcional: Shuffle final para que no siempre salgan las justificadas al final, 
+            // pero las mantenemos al final si el usuario prefiere ese orden.
+            // shuffle($preguntasFinales); 
         }
         // shuffle($preguntasFinales); <--- SE QUITA EL SHUFFLE FINAL
 
@@ -126,6 +146,7 @@ if (isset($_GET['quiz'])) {
             $stmtO->execute([$p['id']]);
             $p['respuestas'] = $stmtO->fetchAll(PDO::FETCH_ASSOC);
         }
+        unset($p); // Romper referencia
 
         // 7. GUARDAR EN SESIÓN
         $_SESSION['quiz_questions_' . $quizId] = $preguntasFinales;

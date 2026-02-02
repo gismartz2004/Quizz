@@ -6,6 +6,15 @@ $extraStyles = "
 <style>
     :root { --primary: " . htmlspecialchars($quizData['color_primario']) . "; }
     body { padding-top: 80px; padding-bottom: 100px; }
+    .q-text { 
+        word-wrap: break-word; 
+        overflow-wrap: break-word; 
+        word-break: break-word; 
+    }
+    .pregunta-card {
+        overflow: visible;
+        height: auto;
+    }
 </style>
 ";
 
@@ -81,8 +90,14 @@ include 'includes/header.php';
                     <?php endforeach; ?>
                 </div>
 
-                <?php if (!empty($pregunta['requiere_justificacion']) && $pregunta['requiere_justificacion'] == 'true'): ?>
-                    <div class="justificacion-container" style="margin-top: 15px;">
+                <?php 
+                // Robust boolean check to handle different DB driver outputs (true, 'true', 't', 1, '1')
+                $rj = $pregunta['requiere_justificacion'] ?? false;
+                $showJustification = ($rj === true || $rj === 'true' || $rj === 't' || $rj == 1 || $rj === '1' || $rj === 'on');
+                
+                if ($showJustification): 
+                ?>
+                    <div class="justificacion-container" style="margin-top: 15px; width: 100%; clear: both;">
                         <label style="display:block; font-weight:600; margin-bottom:5px; color:#475569;">
                             <?= !empty($pregunta['texto_justificacion']) ? htmlspecialchars($pregunta['texto_justificacion']) : '¿Por qué elegiste esta respuesta? Justifica:' ?>
                         </label>
@@ -286,13 +301,24 @@ ob_start();
 
             const html = await response.text();
 
-            if (response.ok && html.includes('¡Examen Finalizado!')) {
-                // SUCCESS: Clear everything and show completion page
+            if (response.ok) {
+                // SUCCESS (or at least valid HTML response)
                 localStorage.removeItem(STORAGE_KEY);
-                document.body.innerHTML = html; // Replace content with success view
+                document.open();
+                document.write(html);
+                document.close();
                 window.scrollTo(0,0);
             } else {
-                throw new Error('Server Busy');
+                console.warn('Server Error:', response.status);
+                // Si el servidor devolvió un error (500, etc) pero envió HTML, mostrarlo
+                if (html.length > 50) {
+                     localStorage.removeItem(STORAGE_KEY);
+                     document.open();
+                     document.write(html);
+                     document.close();
+                } else {
+                     throw new Error('Server returned empty error');
+                }
             }
         } catch (error) {
             console.error('Submission Error:', error);

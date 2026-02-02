@@ -119,34 +119,24 @@ try {
     ]);
     
     $resultadoId = $pdo->lastInsertId();
-    // Limpiar sesión demográfica ya usada
-    unset($_SESSION[$sessionDemoKey]);
-    unset($_SESSION['quiz_start_' . $quizId . '_' . $usuario['id']]); // Limpiar timer
-    unset($_SESSION['quiz_questions_' . $quizId]); // Limpiar orden preguntas
-
-    // ----------------------------------------------------------
-    // 5. GUARDAR DETALLE DE RESPUESTAS (Inserción masiva/Batch)
-    // Commit inmediato removido para mantener atomicidad total y evitar resultados huérfanos parciaIes.
-    // $pdo->commit(); 
-
-    // Iniciar nueva transacción para los detalles (opcional, pero recomendado para mantener integridad parcial)
-    // O hacer inserts directos.
-    
     $justificaciones = $_POST['justificacion'] ?? [];
+    $sessionQuestionsKey = 'quiz_questions_' . $quizId;
+    $preguntasMostradas = $_SESSION[$sessionQuestionsKey] ?? $preguntasDB; 
 
-    if (!empty($respuestasUsuario)) {
-        // Preparar Batch Insert optimizado
-        // En Postgres/MySQL el límite de placeholders suele ser alto (65k), 
-        // pero por seguridad dividimos en chunks de 50 respuestas si fuera necesario.
-        
+    if (!empty($preguntasMostradas)) {
         $sqlBatch = "INSERT INTO respuestas_usuarios (resultado_id, pregunta_id, opcion_id, justificacion) VALUES ";
         $placeholdersBatch = [];
         $valuesBatch = [];
 
-        foreach ($respuestasUsuario as $pregId => $opId) {
+        foreach ($preguntasMostradas as $p) {
+            $pregId = $p['id'];
+            $opId = $respuestasUsuario[$pregId] ?? null;
             $justTexto = isset($justificaciones[$pregId]) ? trim($justificaciones[$pregId]) : null;
-            $placeholdersBatch[] = "(?, ?, ?, ?)";
-            array_push($valuesBatch, $resultadoId, $pregId, $opId, $justTexto);
+
+            if ($opId !== null || $justTexto !== null) {
+                $placeholdersBatch[] = "(?, ?, ?, ?)";
+                array_push($valuesBatch, $resultadoId, $pregId, $opId, $justTexto);
+            }
         }
 
         if (!empty($placeholdersBatch)) {
@@ -155,15 +145,22 @@ try {
         }
     }
 
-    // Ya no hacemos commit aquí porque hicimos commit arriba.
-    // Si falla el batch de respuestas, el resultado principal igual existe (lo cual es mejor que nada).
-
     $pdo->commit();
 
+    // 6. LIMPIEZA DE SESIÓN (Solo después del commit exitoso)
+    unset($_SESSION[$sessionDemoKey]);
+    unset($_SESSION['quiz_start_' . $quizId . '_' . $usuario['id']]); 
+    unset($_SESSION['quiz_questions_' . $quizId]); 
+
+
+    // Limpiar cualquier salida accidental previa
+    if (ob_get_length()) ob_clean();
+
 } catch (Exception $e) {
-    if ($pdo->inTransaction()) {
+    if ($pdo && $pdo->inTransaction()) {
         $pdo->rollBack();
     }
+    error_log("Error en resultados.php: " . $e->getMessage());
     die('<div style="color:red; font-family:sans-serif; padding:20px; text-align:center;">
             <h1>Error al guardar respuestas</h1>
             <p>Por favor toma una captura de esta pantalla y envíala al profesor.</p>

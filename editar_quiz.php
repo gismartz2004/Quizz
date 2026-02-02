@@ -14,12 +14,69 @@ if (!isset($_GET['id'])) {
 $id = (int)$_GET['id'];
 $mensaje = '';
 
+// Mensajes de operaciones
+if (isset($_GET['msg'])) {
+    switch ($_GET['msg']) {
+        case 'saved':
+            $mensaje = '✅ Cambios guardados correctamente.';
+            break;
+        case 'q_deleted':
+            $mensaje = '✅ Pregunta eliminada correctamente.';
+            break;
+        case 'opt_deleted':
+            $mensaje = '✅ Opción eliminada correctamente.';
+            break;
+        case 'opt_error':
+            $mensaje = '❌ Error: Debe haber al menos 2 opciones por pregunta.';
+            break;
+        case 'opt_is_correct':
+            $mensaje = '❌ No puedes eliminar la respuesta correcta. Primero marca otra opción como correcta.';
+            break;
+    }
+}
+
+
 // --- Eliminar pregunta
 if (isset($_GET['delete_question'])) {
     $q_id = (int)$_GET['delete_question'];
     $stmt = $pdo->prepare("DELETE FROM preguntas WHERE id = ? AND quiz_id = ?");
     $stmt->execute([$q_id, $id]);
     header("Location: editar_quiz.php?id=$id&msg=q_deleted");
+    exit;
+}
+
+// --- Eliminar opción
+if (isset($_GET['delete_option'])) {
+    $opt_id = (int)$_GET['delete_option'];
+    
+    // Verificar que la opción no es la correcta
+    $stmt = $pdo->prepare("SELECT es_correcta FROM opciones WHERE id = ?");
+    $stmt->execute([$opt_id]);
+    $opt = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($opt && ($opt['es_correcta'] === true || $opt['es_correcta'] === 't' || $opt['es_correcta'] == 1)) {
+        header("Location: editar_quiz.php?id=$id&msg=opt_is_correct");
+        exit;
+    }
+    
+    // Verificar que la opción pertenece a este quiz y que quedarán al menos 2 opciones
+    $stmt = $pdo->prepare("
+        SELECT p.quiz_id, COUNT(*) as total_opciones
+        FROM opciones o
+        JOIN preguntas p ON o.pregunta_id = p.id
+        WHERE o.pregunta_id = (SELECT pregunta_id FROM opciones WHERE id = ?)
+        GROUP BY p.quiz_id
+    ");
+    $stmt->execute([$opt_id]);
+    $check = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($check && $check['quiz_id'] == $id && $check['total_opciones'] > 2) {
+        $stmt = $pdo->prepare("DELETE FROM opciones WHERE id = ?");
+        $stmt->execute([$opt_id]);
+        header("Location: editar_quiz.php?id=$id&msg=opt_deleted");
+    } else {
+        header("Location: editar_quiz.php?id=$id&msg=opt_error");
+    }
     exit;
 }
 
@@ -77,11 +134,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 // Actualizar opciones
                 if (!empty($data['respuestas']) && is_array($data['respuestas'])) {
+                    // Paso 1: Verificar qué opciones existen realmente
+                    $validOptions = [];
                     foreach ($data['respuestas'] as $r_id_raw => $r_data) {
                         $r_id = (int)$r_id_raw;
                         if (!$r_id) continue;
 
-                        $es_correcta = (!empty($data['correcta']) && (string)$data['correcta'] === (string)$r_id) ? 1 : 0;
+                        // Verificar que la opción existe y pertenece a esta pregunta
+                        $checkOpt = $pdo->prepare("SELECT id FROM opciones WHERE id = ? AND pregunta_id = ?");
+                        $checkOpt->execute([$r_id, $p_id]);
+                        if ($checkOpt->fetch()) {
+                            $validOptions[$r_id] = $r_data;
+                        }
+                    }
+
+                    // Paso 2: Verificar que la respuesta correcta seleccionada existe
+                    $correcta_id = (int)($data['correcta'] ?? 0);
+                    if (!isset($validOptions[$correcta_id]) && !empty($validOptions)) {
+                        // La correcta fue eliminada, usar la primera opción válida
+                        $correcta_id = (int)array_key_first($validOptions);
+                    }
+
+                    // Paso 3: Actualizar solo opciones válidas
+                    foreach ($validOptions as $r_id => $r_data) {
+                        $es_correcta = ($r_id === $correcta_id) ? 1 : 0;
 
                         $stmtR = $pdo->prepare("UPDATE opciones SET texto = ?, es_correcta = ? WHERE id = ?");
                         $stmtR->execute([
@@ -95,7 +171,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $pdo->commit();
-        $mensaje = "✅ Cambios guardados correctamente.";
+        header("Location: editar_quiz.php?id=$id&msg=saved");
+        exit;
     } catch (PDOException $e) {
         $pdo->rollBack();
         $mensaje = "❌ Error: " . htmlspecialchars($e->getMessage());
@@ -111,8 +188,14 @@ if (!$quiz) {
     die("Quiz no encontrado.");
 }
 
-// Cargar preguntas y sus opciones
-$stmtP = $pdo->prepare("SELECT * FROM preguntas WHERE quiz_id = ?");
+// Cargar preguntas y sus opciones (justificación al final)
+$stmtP = $pdo->prepare("
+    SELECT * FROM preguntas 
+    WHERE quiz_id = ? 
+    ORDER BY 
+        CASE WHEN requiere_justificacion = TRUE THEN 1 ELSE 0 END,
+        id ASC
+");
 $stmtP->execute([$id]);
 $preguntas = $stmtP->fetchAll(PDO::FETCH_ASSOC);
 
@@ -121,6 +204,7 @@ foreach ($preguntas as &$p) {
     $stmtO->execute([$p['id']]);
     $p['opciones'] = $stmtO->fetchAll(PDO::FETCH_ASSOC);
 }
+unset($p); // ⚠️ CRÍTICO: Romper la referencia para evitar corrupción en el siguiente bucle foreach
 ?>
 
 <!DOCTYPE html>
@@ -141,18 +225,20 @@ foreach ($preguntas as &$p) {
         }
         .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .q-item { background: #f1f5f9; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #4f46e5; }
-        .q-header { display: flex; justify-content: space-between; margin-bottom: 10px; align-items: center; }
-        .q-title-input { font-weight: 600; width: 70%; }
+        .q-header { display: flex; justify-content: space-between; margin-bottom: 10px; align-items: flex-start; gap: 10px; }
+        .q-title-input { font-weight: 600; width: 100%; min-height: 60px; resize: vertical; }
         .q-val-input { width: 80px; }
         .justificacion-section { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #cbd5e1; }
-        .opt-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-        .opt-radio { width: 20px; height: 20px; cursor: pointer; }
-        .opt-text { flex-grow: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .opt-row { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
+        .opt-radio { width: 20px; height: 20px; cursor: pointer; margin-top: 10px; }
+        .opt-text { flex-grow: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; min-height: 42px; resize: vertical; font-family: inherit; }
         .btn { padding: 12px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
         .btn-save { background: #4f46e5; color: white; font-size: 1rem; width: 100%; justify-content: center; }
         .btn-save:hover { background: #4338ca; }
         .btn-back { background: transparent; color: #64748b; margin-bottom: 20px; }
         .btn-del-q { background: #fee2e2; color: #991b1b; padding: 5px 10px; font-size: 0.8rem; border-radius: 4px; }
+        .btn-del-opt { background: #fef3c7; color: #92400e; padding: 8px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
+        .btn-del-opt:hover { background: #fde68a; }
         .alert, .error { padding: 15px; border-radius: 8px; margin-bottom: 20px; }
         .alert { background: #dcfce7; color: #166534; }
         .error { background: #fee2e2; color: #b91c1c; }
@@ -226,9 +312,12 @@ foreach ($preguntas as &$p) {
             <?php foreach($preguntas as $i => $p): ?>
                 <div class="q-item">
                     <div class="q-header">
-                        <span style="font-weight:700; color:#4f46e5;">#<?= $i+1 ?></span>
-                        <input type="text" name="preguntas[<?= $p['id'] ?>][texto]" class="q-title-input" value="<?= htmlspecialchars($p['texto']) ?>" required>
-                        <input type="number" name="preguntas[<?= $p['id'] ?>][valor]" class="q-val-input" value="<?= (int)$p['valor'] ?>" min="0" required>
+                        <span style="font-weight:700; color:#4f46e5; white-space:nowrap;">#<?= $i+1 ?></span>
+                        <!-- Changed to textarea -->
+                        <textarea name="preguntas[<?= $p['id'] ?>][texto]" class="q-title-input" required><?= htmlspecialchars($p['texto']) ?></textarea>
+                        
+                        <input type="number" name="preguntas[<?= $p['id'] ?>][valor]" class="q-val-input" value="<?= (int)$p['valor'] ?>" min="0" required title="Puntos">
+                        
                         <a href="?id=<?= $id ?>&delete_question=<?= $p['id'] ?>" class="btn-del-q" onclick="return confirm('¿Borrar esta pregunta?')">
                             <i class="fas fa-trash"></i>
                         </a>
@@ -240,19 +329,30 @@ foreach ($preguntas as &$p) {
                         <?php foreach($p['opciones'] as $op): ?>
                             <div class="opt-row">
                                 <input type="radio" name="preguntas[<?= $p['id'] ?>][correcta]" value="<?= $op['id'] ?>" class="opt-radio" <?= $op['es_correcta'] ? 'checked' : '' ?> required>
-                                <input type="text" name="preguntas[<?= $p['id'] ?>][respuestas][<?= $op['id'] ?>][texto]" class="opt-text" value="<?= htmlspecialchars($op['texto']) ?>" required>
+                                <!-- Changed to textarea -->
+                                <textarea name="preguntas[<?= $p['id'] ?>][respuestas][<?= $op['id'] ?>][texto]" class="opt-text" required><?= htmlspecialchars($op['texto']) ?></textarea>
+                                
+                                <?php if (count($p['opciones']) > 2): ?>
+                                    <button type="button" class="btn-del-opt" onclick="deleteOption(<?= $op['id'] ?>, <?= $id ?>)" title="Eliminar opción">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                <?php endif; ?>
                             </div>
                         <?php endforeach; ?>
                     </div>
 
                     <!-- Justificación -->
                     <div class="justificacion-section">
+                        <?php 
+                        $rj = $p['requiere_justificacion'] ?? false;
+                        $isRj = ($rj === true || $rj === 'true' || $rj === 't' || $rj == 1);
+                        ?>
                         <label class="toggle-just">
                             <input type="checkbox" name="preguntas[<?= $p['id'] ?>][requiere_justificacion]" 
-                                <?= !empty($p['requiere_justificacion']) ? 'checked' : '' ?>>
+                                <?= $isRj ? 'checked' : '' ?>>
                             Requiere que el estudiante justifique su respuesta
                         </label>
-                        <div id="just-text-<?= $p['id'] ?>" style="display:<?= !empty($p['requiere_justificacion']) ? 'block' : 'none' ?>;">
+                        <div id="just-text-<?= $p['id'] ?>" style="display:<?= $isRj ? 'block' : 'none' ?>;">
                             <label style="font-size:0.85rem; color:#475569; margin-top:6px;">Texto de instrucción (opcional)</label>
                             <textarea name="preguntas[<?= $p['id'] ?>][texto_justificacion]" class="justificacion-field" rows="2"><?= htmlspecialchars($p['texto_justificacion'] ?? '') ?></textarea>
                         </div>
@@ -286,6 +386,13 @@ foreach ($preguntas as &$p) {
                 }
             });
         });
+
+        // Función para eliminar opción
+        function deleteOption(optId, quizId) {
+            if (confirm('¿Eliminar esta opción de respuesta?\n\nNOTA: Debe haber al menos 2 opciones por pregunta.')) {
+                window.location.href = `editar_quiz.php?id=${quizId}&delete_option=${optId}`;
+            }
+        }
     </script>
 </div>
 
