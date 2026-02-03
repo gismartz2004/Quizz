@@ -84,72 +84,40 @@ if (isset($_GET['quiz'])) {
     // --- CARGA INTELIGENTE SEGMENTADA (23 de un grupo + 2 del otro) ---
     if (!isset($_SESSION['quiz_questions_' . $quizId])) {
         
-        // 1. Traer TODAS las preguntas
-        $stmtP = $pdo->prepare("SELECT * FROM preguntas WHERE quiz_id = ? ORDER BY id ASC");
-        $stmtP->execute([$quizId]);
-        $todasLasPreguntas = $stmtP->fetchAll(PDO::FETCH_ASSOC);
+        // 1. SELECCIONAR 23 MCQ (o las disponibles)
+        $stmtMCQ = $pdo->prepare("SELECT * FROM preguntas WHERE quiz_id = ? AND (requiere_justificacion IS NOT TRUE AND requiere_justificacion::text NOT IN ('true', 't', '1', 'on')) ORDER BY RANDOM() LIMIT 25");
+        $stmtMCQ->execute([$quizId]);
+        $mcqFound = $stmtMCQ->fetchAll(PDO::FETCH_ASSOC);
 
-        // 2. LÓGICA DE SELECCIÓN
-        $totalDisponibles = count($todasLasPreguntas);
+        // 2. SELECCIONAR 2 JUSTIFICADAS
+        $stmtJust = $pdo->prepare("SELECT * FROM preguntas WHERE quiz_id = ? AND (requiere_justificacion IS TRUE OR requiere_justificacion::text IN ('true', 't', '1', 'on')) ORDER BY RANDOM() LIMIT 2");
+        $stmtJust->execute([$quizId]);
+        $justFound = $stmtJust->fetchAll(PDO::FETCH_ASSOC);
 
-        if ($totalDisponibles <= 10) {
-            // CASO: Pocas preguntas (ej. prueba) -> Seleccionar solo 2 al azar
-            shuffle($todasLasPreguntas);
-            $preguntasFinales = array_slice($todasLasPreguntas, 0, 2);
-        } else {
-            // CASO NORMAL: Segmentación 50/50 y selección 23+2
-            
-            // 2.1 SEPARAR POR TIPO
-            $mcq = [];
-            $justified = [];
-            foreach ($todasLasPreguntas as $p) {
-                $rj = $p['requiere_justificacion'] ?? false;
-                $isJustified = ($rj === true || $rj === 'true' || $rj === 't' || $rj == 1 || $rj === '1' || $rj === 'on');
-                if ($isJustified) $justified[] = $p;
-                else $mcq[] = $p;
-            }
-    
-            // 2.2 SELECCIONAR CON BACKFILL PARA LLEGAR A 25
-            shuffle($mcq);
-            shuffle($justified);
-            
-            // Intentar 23 MCQ y 2 Justificadas
-            $seleccionA = array_slice($mcq, 0, 23);
-            $seleccionB = array_slice($justified, 0, 2);
-            
-            $preguntasFinales = array_merge($seleccionA, $seleccionB);
-            
-            // Si nos faltan para llegar a 25, rellenar de lo que sobre
-            $faltantes = 25 - count($preguntasFinales);
-            if ($faltantes > 0) {
-                // Primero intentar rellenar con más MCQ
-                $extraMCQ = array_slice($mcq, 23, $faltantes);
-                $preguntasFinales = array_merge($preguntasFinales, $extraMCQ);
-                
-                $faltantes = 25 - count($preguntasFinales);
-                if ($faltantes > 0) {
-                    // Si aún falta, intentar rellenar con más Justificadas
-                    $extraJustified = array_slice($justified, 2, $faltantes);
-                    $preguntasFinales = array_merge($preguntasFinales, $extraJustified);
-                }
-            }
-            
-            // Opcional: Shuffle final para que no siempre salgan las justificadas al final, 
-            // pero las mantenemos al final si el usuario prefiere ese orden.
-            // shuffle($preguntasFinales); 
+        // 3. COMBINAR CON BACKFILL PARA LLEGAR A 25
+        $seleccionA = array_slice($mcqFound, 0, 23);
+        $seleccionB = $justFound;
+
+        $preguntasFinales = array_merge($seleccionA, $seleccionB);
+
+        // Backfill si faltan para 25
+        $faltantes = 25 - count($preguntasFinales);
+        if ($faltantes > 0 && count($mcqFound) > 23) {
+            $extraMCQ = array_slice($mcqFound, 23, $faltantes);
+            $preguntasFinales = array_merge($preguntasFinales, $extraMCQ);
         }
-        // shuffle($preguntasFinales); <--- SE QUITA EL SHUFFLE FINAL
 
-        // 6. CARGAR OPCIONES
+        // 4. CARGAR OPCIONES SOLAMENTE PARA LAS 25 SELECCIONADAS
         foreach ($preguntasFinales as &$p) {
             $stmtO = $pdo->prepare("SELECT id, texto, imagen FROM opciones WHERE pregunta_id = ?");
             $stmtO->execute([$p['id']]);
             $p['respuestas'] = $stmtO->fetchAll(PDO::FETCH_ASSOC);
         }
-        unset($p); // Romper referencia
+        unset($p);
 
-        // 7. GUARDAR EN SESIÓN
+        // 5. GUARDAR Y CERRAR SESIÓN RÁPIDO PARA EVITAR LOCKS
         $_SESSION['quiz_questions_' . $quizId] = $preguntasFinales;
+        session_write_close();
     }
 
     $preguntasMostrar = $_SESSION['quiz_questions_' . $quizId];
