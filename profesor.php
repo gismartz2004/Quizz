@@ -1,5 +1,4 @@
-<?php
-session_start();
+require_once 'includes/session.php';
 require 'db.php';
 
 // 1. SEGURIDAD
@@ -584,6 +583,14 @@ try {
     function cerrarModal() {
         document.getElementById('modalPreview').style.display = 'none';
     }
+
+    // Heartbeat: Keep session alive every 5 minutes
+    setInterval(function() {
+        fetch('keep_alive.php')
+            .then(r => r.text())
+            .then(t => console.log('Session Heartbeat:', t))
+            .catch(e => console.error('Heartbeat failed:', e));
+    }, 300000); // 300,000ms = 5 minutes
 </script>
 
 </body>

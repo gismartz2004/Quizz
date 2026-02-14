@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once 'includes/session.php';
 header('Content-Type: text/html; charset=utf-8');
 
 // Habilitar reporte de errores al máximo

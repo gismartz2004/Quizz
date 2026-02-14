@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once dirname(__DIR__) . '/includes/session.php';
 require '../db.php'; // Adjust path since we are in /api/
 
 // 1. SEGURIDAD

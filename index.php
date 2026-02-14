@@ -1,7 +1,4 @@
-<?php
-ini_set('session.gc_maxlifetime', 7200);
-session_set_cookie_params(7200);
-session_start();
+require_once 'includes/session.php';
 require 'db.php';
 
 // Configurar zona horaria
