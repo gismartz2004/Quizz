@@ -1,3 +1,4 @@
+<?php
 require_once 'includes/session.php';
 require 'db.php';              // Conexión SQL
 ini_set('max_execution_time', 300); // 5 minutos máximo para procesar
