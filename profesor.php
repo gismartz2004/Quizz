@@ -472,6 +472,11 @@ try {
             <h5>Reportes</h5>
             <p>Analiza resultados y métricas</p>
         </a>
+        <a href="resultados_septimo.php" class="nav-card success">
+            <div class="icon"><i class="fas fa-chart-bar"></i></div>
+            <h5>Reportes 7mo EGB</h5>
+            <p>Analiza resultados y métricas</p>
+        </a>
         <a href="logout.php" class="nav-card warning">
             <div class="icon"><i class="fas fa-sign-out-alt"></i></div>
             <h5>Cerrar Sesión</h5>

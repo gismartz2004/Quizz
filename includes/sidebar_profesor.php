@@ -13,8 +13,9 @@
         <a href="<?php echo isset($base_path) ? $base_path : ''; ?>crear.php" class="nav-item <?php echo (isset($page) && $page == 'crear') ? 'active' : ''; ?>">
             <i class="fas fa-plus-circle"></i> Nuevo Quiz
         </a>
-        <a href="<?php echo isset($base_path) ? $base_path : ''; ?>lenguaje_d.php" class="nav-item <?php echo (isset($page) && $page == 'resultados') ? 'active' : ''; ?>">
-            <i class="fas fa-chart-bar"></i> Resultados
+        
+        <a href="<?php echo isset($base_path) ? $base_path : ''; ?>resultados_septimo.php" class="nav-item <?php echo (isset($page) && $page == 'resultados_septimo') ? 'active' : ''; ?>">
+            <i class="fas fa-chart-line"></i> Séptimo EGB
         </a>
         <a href="<?php echo isset($base_path) ? $base_path : ''; ?>nne.php" class="nav-item <?php echo (isset($page) && $page == 'nne') ? 'active' : ''; ?>">
             <i class="fas fa-lock"></i> Exámenes NNE

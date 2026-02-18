@@ -101,73 +101,102 @@ function calculateSectionStats($results) {
     return $stats;
 }
 
-function analyzeSkillsDiff($pdo, $quiz_id = null) {
+function analyzeSkillsDiff($pdo, $quiz_id = null, $threshold = 1.0, $filters = []) {
     if (!$quiz_id) return [];
+
+    $threshold = (float)$threshold;
+    $params = ['qid' => $quiz_id, 'threshold' => $threshold];
+    
+    // Construir filtros dinámicos
+    $filter_sql = "";
+    if (!empty($filters['genero'])) {
+        $filter_sql .= " AND r.genero = :genero";
+        $params['genero'] = $filters['genero'];
+    }
+    if (!empty($filters['paralelo'])) {
+        $filter_sql .= " AND r.paralelo = :paralelo";
+        $params['paralelo'] = $filters['paralelo'];
+    }
+    if (!empty($filters['jornada'])) {
+        if ($filters['jornada'] === 'Matutina') {
+            $filter_sql .= " AND r.paralelo IN ('A', 'B', 'C', 'D')";
+        } elseif ($filters['jornada'] === 'Vespertina') {
+            $filter_sql .= " AND r.paralelo IN ('E', 'F', 'G', 'H')";
+        }
+    }
 
     try {
         // Obtenemos preguntas y estadisticas de respuestas
-        // Usamos COALESCE para soportar calificacion manual y automatica
-        // Simplificamos la consulta para mayor compatibilidad
+        // IMPORTANTE: Postgres requiere casting explícito y JOIN con opciones para autocalificación
         $sql = "
             SELECT 
                 p.id, 
                 p.texto, 
                 COUNT(ru.id) as total_intentos,
                 SUM(CASE 
-                    WHEN ru.es_correcta_manual = true THEN 1
+                    WHEN ru.es_correcta_manual IS TRUE THEN 1
                     WHEN ru.es_correcta_manual IS FALSE THEN 0
-                    WHEN ru.es_correcta = true THEN 1
+                    WHEN o.es_correcta IS TRUE THEN 1
                     ELSE 0 
                 END) as correctas,
                 (COUNT(ru.id) - SUM(CASE 
-                    WHEN ru.es_correcta_manual = true THEN 1
+                    WHEN ru.es_correcta_manual IS TRUE THEN 1
                     WHEN ru.es_correcta_manual IS FALSE THEN 0
-                    WHEN ru.es_correcta = true THEN 1
+                    WHEN o.es_correcta IS TRUE THEN 1
                     ELSE 0 
                 END)) as incorrectas,
+                (SUM(CASE 
+                    WHEN ru.es_correcta_manual IS TRUE THEN 1
+                    WHEN ru.es_correcta_manual IS FALSE THEN 0
+                    WHEN o.es_correcta IS TRUE THEN 1
+                    ELSE 0 
+                END)::float / NULLIF(COUNT(ru.id), 0)) as success_rate,
                 STRING_AGG(CASE 
-                    WHEN (ru.es_correcta_manual = true OR (ru.es_correcta_manual IS NULL AND ru.es_correcta = true)) THEN NULL 
+                    WHEN (ru.es_correcta_manual IS TRUE OR (ru.es_correcta_manual IS NULL AND o.es_correcta IS TRUE)) THEN NULL 
                     ELSE u.nombre 
                 END, ', ') as lista_errores
             FROM preguntas p
             LEFT JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id
+            LEFT JOIN opciones o ON ru.opcion_id = o.id
             LEFT JOIN resultados r ON ru.resultado_id = r.id
             LEFT JOIN usuarios u ON r.usuario_id = u.id
-            WHERE p.quiz_id = :qid
+            WHERE p.quiz_id = :qid $filter_sql
             GROUP BY p.id, p.texto
-            HAVING COUNT(ru.id) > 0
-            ORDER BY (SUM(CASE 
-                    WHEN ru.es_correcta_manual = true THEN 1
+            HAVING COUNT(ru.id) > 0 AND (SUM(CASE 
+                    WHEN ru.es_correcta_manual IS TRUE THEN 1
                     WHEN ru.es_correcta_manual IS FALSE THEN 0
-                    WHEN ru.es_correcta = true THEN 1
+                    WHEN o.es_correcta IS TRUE THEN 1
                     ELSE 0 
-                END)::float / NULLIF(COUNT(ru.id), 0)) ASC
-            LIMIT 5
+                END)::float / NULLIF(COUNT(ru.id), 0)) <= :threshold
+            ORDER BY success_rate ASC
         ";
         
         $stmt = $pdo->prepare($sql);
-        $stmt->execute(['qid' => $quiz_id]);
+        $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     } catch (Exception $e) {
-        // Si falla por columna inexistente (manual), intentamos version basica
+        // Fallback: Lógica básica sin corrección manual (por si falla la detección de columnas)
         try {
             $sql_basic = "
                 SELECT 
                     p.id, p.texto, 
                     COUNT(ru.id) as total_intentos,
-                    SUM(CASE WHEN ru.es_correcta = true THEN 1 ELSE 0 END) as correctas,
-                    (COUNT(ru.id) - SUM(CASE WHEN ru.es_correcta = true THEN 1 ELSE 0 END)) as incorrectas,
+                    SUM(CASE WHEN o.es_correcta IS TRUE THEN 1 ELSE 0 END) as correctas,
+                    (COUNT(ru.id) - SUM(CASE WHEN o.es_correcta IS TRUE THEN 1 ELSE 0 END)) as incorrectas,
+                    (SUM(CASE WHEN o.es_correcta IS TRUE THEN 1 ELSE 0 END)::float / NULLIF(COUNT(ru.id), 0)) as success_rate,
                     '' as lista_errores
                 FROM preguntas p
-                JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id
-                WHERE p.quiz_id = :qid
+                LEFT JOIN respuestas_usuarios ru ON p.id = ru.pregunta_id
+                LEFT JOIN opciones o ON ru.opcion_id = o.id
+                LEFT JOIN resultados r ON ru.resultado_id = r.id
+                WHERE p.quiz_id = :qid $filter_sql
                 GROUP BY p.id, p.texto
-                ORDER BY (SUM(CASE WHEN ru.es_correcta = true THEN 1 ELSE 0 END)::float / NULLIF(COUNT(ru.id), 0)) ASC
-                LIMIT 5
+                HAVING COUNT(ru.id) > 0 AND (SUM(CASE WHEN o.es_correcta IS TRUE THEN 1 ELSE 0 END)::float / NULLIF(COUNT(ru.id), 0)) <= :threshold
+                ORDER BY success_rate ASC
             ";
             $stmt = $pdo->prepare($sql_basic);
-            $stmt->execute(['qid' => $quiz_id]);
+            $stmt->execute($params);
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (Exception $e2) {
             return [];
@@ -198,5 +227,70 @@ function getConclusions($avg, $approval, $anomalies, $total) {
         'aprobacion' => $aprobMsg,
         'seguridad' => $secMsg
     ];
+}
+
+/**
+ * Fetches detailed answers for a batch of results for the raw data table.
+ */
+function getDetailedBatchAnswers($pdo, $resultIds) {
+    if (empty($resultIds)) return [];
+    
+    $inQuery = implode(',', array_map('intval', $resultIds));
+    $batchAnswers = [];
+    
+    $sql = "SELECT ru.resultado_id, ru.pregunta_id, o.texto as respuesta_texto,
+                   ru.es_correcta_manual, o.es_correcta, p.valor as puntos_pregunta
+            FROM respuestas_usuarios ru 
+            LEFT JOIN opciones o ON ru.opcion_id = o.id
+            LEFT JOIN preguntas p ON ru.pregunta_id = p.id
+            WHERE ru.resultado_id IN ($inQuery)";
+    
+    try {
+        $stmt = $pdo->query($sql);
+        while ($ans = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $is_c_manual = $ans['es_correcta_manual'] ?? null;
+            $is_c_auto   = ($ans['es_correcta'] === true || $ans['es_correcta'] === 't' || $ans['es_correcta'] == 1);
+            
+            if ($is_c_manual !== null) {
+                $final_correct = ($is_c_manual === true || $is_c_manual === 't' || $is_c_manual == 1);
+            } else {
+                $final_correct = $is_c_auto;
+            }
+
+            $points = $final_correct ? floatval($ans['puntos_pregunta']) : 0;
+            $text = trim($ans['respuesta_texto'] ?? 'N/R');
+            
+            $batchAnswers[$ans['resultado_id']][$ans['pregunta_id']] = [
+                'texto' => $text,
+                'puntos' => $points,
+                'es_correcta' => $final_correct
+            ];
+        }
+    } catch (Exception $e) {
+        // Fallback: Si falló la consulta (probablemente por es_correcta_manual)
+        try {
+            $sql_fallback = "SELECT ru.resultado_id, ru.pregunta_id, o.texto as respuesta_texto,
+                           o.es_correcta, p.valor as puntos_pregunta
+                    FROM respuestas_usuarios ru 
+                    LEFT JOIN opciones o ON ru.opcion_id = o.id
+                    LEFT JOIN preguntas p ON ru.pregunta_id = p.id
+                    WHERE ru.resultado_id IN ($inQuery)";
+            $stmt = $pdo->query($sql_fallback);
+            while ($ans = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $final_correct = ($ans['es_correcta'] === true || $ans['es_correcta'] === 't' || $ans['es_correcta'] == 1);
+                $points = $final_correct ? floatval($ans['puntos_pregunta']) : 0;
+                $text = trim($ans['respuesta_texto'] ?? 'N/R');
+                $batchAnswers[$ans['resultado_id']][$ans['pregunta_id']] = [
+                    'texto' => $text,
+                    'puntos' => $points,
+                    'es_correcta' => $final_correct
+                ];
+            }
+        } catch (Exception $e2) {
+             // Real silent error
+        }
+    }
+    
+    return $batchAnswers;
 }
 ?>
