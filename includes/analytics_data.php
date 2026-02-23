@@ -124,6 +124,13 @@ function analyzeSkillsDiff($pdo, $quiz_id = null, $threshold = 1.0, $filters = [
             $filter_sql .= " AND r.paralelo IN ('E', 'F', 'G', 'H')";
         }
     }
+    if (!empty($filters['muestra'])) {
+        if ($filters['muestra'] === 'si') {
+            $filter_sql .= " AND COALESCE(r.es_muestra, FALSE) = TRUE";
+        } elseif ($filters['muestra'] === 'no') {
+            $filter_sql .= " AND COALESCE(r.es_muestra, FALSE) = FALSE";
+        }
+    }
 
     try {
         // Obtenemos preguntas y estadisticas de respuestas

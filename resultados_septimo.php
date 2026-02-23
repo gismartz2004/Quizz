@@ -25,6 +25,7 @@ $fecha_hasta    = $_GET['fecha_hasta'] ?? '';
 $genero         = $_GET['genero'] ?? '';
 $paralelo       = $_GET['paralelo'] ?? '';
 $jornada_filtro = $_GET['jornada'] ?? ''; // 'Matutina' o 'Vespertina'
+$filtro_muestra = $_GET['muestra'] ?? 'si'; // SI por defecto
 $threshold      = isset($_GET['threshold']) ? (float)$_GET['threshold'] / 100 : 1.0;
 
 // 4. CONSULTA SQL BASE
@@ -60,6 +61,11 @@ if ($paralelo) {
     $sql .= " AND r.paralelo = :paralelo";
     $params['paralelo'] = $paralelo;
 }
+if ($filtro_muestra === 'si') {
+    $sql .= " AND COALESCE(r.es_muestra, FALSE) = TRUE";
+} elseif ($filtro_muestra === 'no') {
+    $sql .= " AND COALESCE(r.es_muestra, FALSE) = FALSE";
+}
 
 // Filtro de Jornada (A-D Matutina, E-H Vespertina)
 if ($jornada_filtro === 'Matutina') {
@@ -83,7 +89,8 @@ $sectionStats = calculateSectionStats($resultados);
 $filters_analysis = [
     'genero' => $genero,
     'paralelo' => $paralelo,
-    'jornada' => $jornada_filtro
+    'jornada' => $jornada_filtro,
+    'muestra' => $filtro_muestra
 ];
 $skillsStats = ($quiz_id) ? analyzeSkillsDiff($pdo, $quiz_id, $threshold, $filters_analysis) : [];
 
@@ -251,7 +258,15 @@ $respuestas_batch = getDetailedBatchAnswers($pdo, $ids_resultados);
                     <option value="Femenino" <?= $genero == 'Femenino' ? 'selected' : '' ?>>Femenino</option>
                 </select>
             </div>
-            <div class="col-md-3 d-flex align-items-end gap-2">
+            <div class="col-md-1">
+                <label class="form-label fw-bold small text-muted">Muestra</label>
+                <select name="muestra" class="form-select select-field">
+                    <option value="todos" <?= $filtro_muestra == 'todos' ? 'selected' : '' ?>>Todos</option>
+                    <option value="si" <?= $filtro_muestra == 'si' ? 'selected' : '' ?>>Sí</option>
+                    <option value="no" <?= $filtro_muestra == 'no' ? 'selected' : '' ?>>No</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-end gap-2">
                 <button type="submit" class="btn btn-primary w-100">Aplicar Filtros</button>
                 <a href="resultados_septimo.php" class="btn btn-light text-muted" title="Limpiar"><i class="fas fa-undo"></i></a>
             </div>

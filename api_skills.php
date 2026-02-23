@@ -15,7 +15,8 @@ $threshold = isset($_GET['threshold']) ? (float)$_GET['threshold'] / 100 : 1.0;
 $filters = [
     'genero' => $_GET['genero'] ?? '',
     'paralelo' => $_GET['paralelo'] ?? '',
-    'jornada' => $_GET['jornada'] ?? ''
+    'jornada' => $_GET['jornada'] ?? '',
+    'muestra' => $_GET['muestra'] ?? ''
 ];
 
 if (!$quiz_id) {
